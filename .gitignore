@@ -5,3 +5,7 @@ runtime/
 *.sqlite
 __pycache__/
 *.pyc
+
+test_oanda.py
+
+
