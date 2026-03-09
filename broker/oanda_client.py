@@ -28,3 +28,19 @@ class OandaClient:
             timeout=timeout,
         )
         return response.status_code, response.json()
+
+    def submit_order(self, payload: Dict[str, Any], timeout: int = 15) -> Tuple[int, Dict[str, Any]]:
+        if not self.is_configured():
+            raise RuntimeError("OANDA environment is not fully configured")
+
+        url = f"{self.api_url}/v3/accounts/{self.account_id}/orders"
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        return response.status_code, response.json()
