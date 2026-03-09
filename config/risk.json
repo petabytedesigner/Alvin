@@ -1,0 +1,8 @@
+{
+  "daily_loss_limit_pct": 2.0,
+  "max_open_risk_pct": 2.0,
+  "max_concurrent_trades": 3,
+  "kill_switch_drawdown_pct": 8.0,
+  "loss_streak_reduction_pct": 30,
+  "loss_streak_pause_after": 3
+}

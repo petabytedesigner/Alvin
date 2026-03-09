@@ -1,0 +1,5 @@
+requests>=2.31
+python-dotenv>=1.0
+python-dateutil>=2.9
+pytz>=2024.1
+tenacity>=8.2

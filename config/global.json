@@ -1,0 +1,8 @@
+{
+  "project_name": "Alvin",
+  "environment": "practice",
+  "timezone": "UTC",
+  "trading_day_anchor": "17:00 America/New_York",
+  "log_level": "INFO",
+  "db_path": "runtime/alvin.sqlite"
+}

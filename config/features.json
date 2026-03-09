@@ -1,0 +1,6 @@
+{
+  "broker_connectivity_required": true,
+  "journal_enabled": true,
+  "bootstrap_writes_snapshot": true,
+  "doctor_checks_broker": false
+}

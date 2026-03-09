@@ -1,0 +1,20 @@
+{
+  "fx_majors": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "USD_CHF",
+    "USD_CAD"
+  ],
+  "metals": [
+    "XAU_USD"
+  ],
+  "crypto": [
+    "BTC_USD"
+  ],
+  "indices": [
+    "NAS100_USD",
+    "SPX500_USD",
+    "US30_USD"
+  ]
+}
