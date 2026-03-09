@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
-from uuid import uuid4
 
 from strategy.signal_candidate import SignalCandidate, SignalCandidateBuilder
 from strategy.level_detection import Level
@@ -40,6 +39,9 @@ class StrategySetupBuilder:
         confirmation: ConfirmationResult,
         atr_value: float,
         score_hint: float,
+        grade: str = "B",
+        session: str = "unknown",
+        post_news: bool = False,
         metadata: Dict[str, Any] | None = None,
     ) -> SetupBuildResult:
         reasons: list[str] = []
@@ -50,25 +52,28 @@ class StrategySetupBuilder:
             "setup_type": setup_type,
             "atr_value": atr_value,
             "score_hint": score_hint,
+            "level_id": level.level_id,
             "level_kind": level.kind,
             "level_price": level.price,
-            "level_touches": getattr(level, "touches", None),
+            "level_touches": level.touches,
             "break_retest": {
-                "allowed": break_retest.allowed,
-                "break_valid": getattr(break_retest.break_assessment, "valid", False),
-                "retest_valid": getattr(break_retest.retest_assessment, "valid", False),
-                "confidence": getattr(break_retest, "confidence", 0.0),
+                "valid": break_retest.valid,
+                "direction": break_retest.direction,
+                "reason": break_retest.reason,
+                "break_valid": break_retest.break_assessment.valid,
+                "retest_valid": break_retest.retest_assessment.valid if break_retest.retest_assessment else False,
             },
             "confirmation": {
-                "valid": confirmation.valid,
-                "kind": confirmation.kind,
+                "confirmed": confirmation.confirmed,
+                "type": confirmation.confirmation_type,
                 "confidence": confirmation.confidence,
+                "reasons": confirmation.reasons,
             },
         }
 
-        if not break_retest.allowed:
+        if not break_retest.valid:
             reasons.append("break_retest_not_valid")
-        if not confirmation.valid:
+        if not confirmation.confirmed:
             reasons.append("m15_confirmation_not_valid")
         if atr_value <= 0:
             reasons.append("atr_invalid")
@@ -76,25 +81,37 @@ class StrategySetupBuilder:
             reasons.append("score_hint_invalid")
         if side not in {"long", "short"}:
             reasons.append("side_invalid")
+        if break_retest.direction not in {"long", "short"}:
+            reasons.append("break_direction_invalid")
+        elif break_retest.direction != side:
+            reasons.append("side_direction_mismatch")
 
         allowed = not reasons
         if not allowed:
-            return SetupBuildResult(None, False, reasons, details)
+            return SetupBuildResult(candidate=None, allowed=False, reasons=reasons, details=details)
 
-        trigger_ref = f"{level.kind}:{round(level.price, 5)}:{break_retest.break_assessment.break_bar_index}"
+        trigger_ref = f"{level.kind}:{round(level.price, 5)}:{break_retest.break_assessment.close_price}"
         candidate = self._candidate_builder.build(
-            candidate_id=str(uuid4()),
             instrument=instrument,
             timeframe=timeframe,
             side=side,
-            setup_type=setup_type,
+            score=score_hint,
+            grade=grade,
+            regime="unknown",
             trigger_reference=trigger_ref,
-            score_hint=score_hint,
-            details={
+            level_reference=level.level_id,
+            setup_type=setup_type,
+            session=session,
+            post_news=post_news,
+            notes={
+                "break_reason": break_retest.reason,
+                "confirmation_type": confirmation.confirmation_type,
+            },
+            metadata={
                 **(metadata or {}),
                 **details,
             },
         )
 
         reasons.append("setup_candidate_built")
-        return SetupBuildResult(candidate, True, reasons, details)
+        return SetupBuildResult(candidate=candidate, allowed=True, reasons=reasons, details=details)
