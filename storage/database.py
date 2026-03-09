@@ -61,5 +61,69 @@ class Database:
         self.connection.commit()
         return sha256
 
+    def insert_order_intent(self, ts_utc: str, intent: Dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO order_intents
+            (intent_id, dedupe_key, instrument, side, state, reason, correlation_id, broker_request_id, history_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent["intent_id"],
+                intent["dedupe_key"],
+                intent["instrument"],
+                intent["side"],
+                intent["state"],
+                intent.get("reason"),
+                intent.get("correlation_id"),
+                intent.get("broker_request_id"),
+                json.dumps(intent.get("history", []), ensure_ascii=False, sort_keys=True),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+
+    def insert_decision_snapshot(
+        self,
+        *,
+        ts_utc: str,
+        instrument: str,
+        module: str,
+        decision_type: str,
+        status: str,
+        reasons: list[str],
+        context: Dict[str, Any],
+    ) -> str:
+        context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+        reasons_json = json.dumps(reasons, ensure_ascii=False, sort_keys=True)
+        sha256 = hashlib.sha256(
+            f"{ts_utc}|{instrument}|{module}|{decision_type}|{status}|{reasons_json}|{context_json}".encode("utf-8")
+        ).hexdigest()
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO decision_snapshots
+            (ts_utc, instrument, module, decision_type, status, reasons_json, context_json, sha256)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ts_utc, instrument, module, decision_type, status, reasons_json, context_json, sha256),
+        )
+        self.connection.commit()
+        return sha256
+
+    def insert_reconciliation_run(self, ts_utc: str, status: str, mismatches: list[Dict[str, Any]], repairs: list[Dict[str, Any]]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO reconciliation_runs (ts_utc, status, mismatches_json, repairs_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                ts_utc,
+                status,
+                json.dumps(mismatches, ensure_ascii=False, sort_keys=True),
+                json.dumps(repairs, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.connection.commit()
+
     def close(self) -> None:
         self.connection.close()
