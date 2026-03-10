@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from strategy.level_detection import Candle, Level
 
@@ -51,12 +51,25 @@ class BreakRetestValidator:
         base_retest_zone_atr_ratio: float = 0.20,
         min_retest_bars: int = 1,
         max_retest_bars: int = 10,
+        config: Mapping[str, Any] | None = None,
     ) -> None:
-        self.min_body_atr_ratio = min_body_atr_ratio
-        self.max_counter_wick_ratio = max_counter_wick_ratio
-        self.base_retest_zone_atr_ratio = base_retest_zone_atr_ratio
-        self.min_retest_bars = min_retest_bars
-        self.max_retest_bars = max_retest_bars
+        cfg = self._resolve_config(config)
+        self.min_body_atr_ratio = float(cfg.get("min_body_atr_ratio", min_body_atr_ratio))
+        self.max_counter_wick_ratio = float(cfg.get("max_counter_wick_ratio", max_counter_wick_ratio))
+        self.base_retest_zone_atr_ratio = float(cfg.get("base_retest_zone_atr_ratio", base_retest_zone_atr_ratio))
+        self.min_retest_bars = int(cfg.get("min_retest_bars", min_retest_bars))
+        self.max_retest_bars = int(cfg.get("max_retest_bars", max_retest_bars))
+
+    @classmethod
+    def from_config(cls, strategy_config: Mapping[str, Any]) -> "BreakRetestValidator":
+        return cls(config=strategy_config.get("break_retest", {}))
+
+    def _resolve_config(self, config: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        if config is None:
+            return {}
+        if not isinstance(config, Mapping):
+            raise ValueError("break_retest config must be a mapping")
+        return config
 
     def assess_break(
         self,

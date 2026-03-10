@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from statistics import mean
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 @dataclass(slots=True)
@@ -52,15 +52,28 @@ class LevelDetector:
         min_range_candles: int = 15,
         range_width_atr_multiple: float = 1.5,
         touch_tolerance_atr_multiple: float = 0.15,
+        config: Mapping[str, Any] | None = None,
     ) -> None:
+        cfg = self._resolve_config(config)
+        fractal_window = cfg.get("fractal_window", fractal_window)
+        min_swing_touches = cfg.get("min_swing_touches", min_swing_touches)
+        min_swing_spacing = cfg.get("min_swing_spacing", min_swing_spacing)
+        min_range_candles = cfg.get("min_range_candles", min_range_candles)
+        range_width_atr_multiple = cfg.get("range_width_atr_multiple", range_width_atr_multiple)
+        touch_tolerance_atr_multiple = cfg.get("touch_tolerance_atr_multiple", touch_tolerance_atr_multiple)
+
         if fractal_window < 1:
             raise LevelDetectionError("fractal_window must be >= 1")
-        self.fractal_window = fractal_window
-        self.min_swing_touches = min_swing_touches
-        self.min_swing_spacing = min_swing_spacing
-        self.min_range_candles = min_range_candles
-        self.range_width_atr_multiple = range_width_atr_multiple
-        self.touch_tolerance_atr_multiple = touch_tolerance_atr_multiple
+        self.fractal_window = int(fractal_window)
+        self.min_swing_touches = int(min_swing_touches)
+        self.min_swing_spacing = int(min_swing_spacing)
+        self.min_range_candles = int(min_range_candles)
+        self.range_width_atr_multiple = float(range_width_atr_multiple)
+        self.touch_tolerance_atr_multiple = float(touch_tolerance_atr_multiple)
+
+    @classmethod
+    def from_config(cls, strategy_config: Mapping[str, Any]) -> "LevelDetector":
+        return cls(config=strategy_config.get("level_detection", {}))
 
     def detect_levels(self, candles: Sequence[Candle], *, atr_value: float) -> dict[str, list[Level]]:
         if len(candles) < max((self.fractal_window * 2) + 1, self.min_range_candles):
@@ -91,6 +104,13 @@ class LevelDetector:
                 "min_range_candles": self.min_range_candles,
             },
         }
+
+    def _resolve_config(self, config: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        if config is None:
+            return {}
+        if not isinstance(config, Mapping):
+            raise LevelDetectionError("level detection config must be a mapping")
+        return config
 
     def _find_fractal_highs(self, candles: Sequence[Candle]) -> list[tuple[int, float]]:
         points: list[tuple[int, float]] = []
