@@ -30,12 +30,7 @@ class AcceptanceDecision:
 
 
 class AcceptancePipeline:
-    """
-    Core acceptance combiner for Alvin.
-
-    This layer does not create orders and does not touch storage. It only
-    combines upstream assessments into a deterministic accept/reject decision.
-    """
+    """Core acceptance combiner for Alvin."""
 
     def decide(
         self,
@@ -51,9 +46,11 @@ class AcceptancePipeline:
         explainability_reasons: Iterable[str] | None = None,
     ) -> AcceptanceDecision:
         reasons: List[str] = []
+        normalized_score = self._normalize_score(score_value)
         details: Dict[str, Any] = {
             "score_allowed": score_allowed,
-            "score_value": round(float(score_value), 4),
+            "score_value": round(float(score_value), 2),
+            "score_normalized": normalized_score,
         }
 
         regime_name, regime_confidence = self._extract_regime(regime_assessment)
@@ -101,7 +98,7 @@ class AcceptancePipeline:
         state = "accepted" if allowed else "rejected"
         conviction = self._compute_conviction(
             allowed=allowed,
-            score_value=float(score_value),
+            normalized_score=normalized_score,
             regime_confidence=regime_confidence,
             execution_score=execution_score,
             portfolio_score=portfolio_score,
@@ -147,11 +144,14 @@ class AcceptancePipeline:
         reasons = [str(x) for x in getattr(risk_result, "reasons", [])]
         return allowed, risk_pct, reasons
 
+    def _normalize_score(self, score_value: float) -> float:
+        return round(max(0.0, min(1.0, float(score_value) / 100.0)), 4)
+
     def _compute_conviction(
         self,
         *,
         allowed: bool,
-        score_value: float,
+        normalized_score: float,
         regime_confidence: float,
         execution_score: float,
         portfolio_score: float,
@@ -161,7 +161,7 @@ class AcceptancePipeline:
             return "blocked"
 
         composite = (
-            (score_value * 0.35)
+            (normalized_score * 0.35)
             + (regime_confidence * 0.20)
             + (execution_score * 0.25)
             + ((1.0 - min(1.0, portfolio_score)) * 0.10)

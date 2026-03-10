@@ -25,6 +25,10 @@ class SignalCandidate:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    @property
+    def normalized_score(self) -> float:
+        return round(max(0.0, min(1.0, self.score / 100.0)), 4)
+
 
 class SignalCandidateBuilder:
     VALID_SIDES = {"long", "short"}
@@ -62,7 +66,7 @@ class SignalCandidateBuilder:
         if not level_reference.strip():
             raise ValueError("level_reference is required")
 
-        bounded_score = round(max(0.0, min(1.0, score)), 4)
+        bounded_score = round(max(0.0, min(100.0, score)), 2)
 
         return SignalCandidate(
             instrument=instrument.strip().upper(),

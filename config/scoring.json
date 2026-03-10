@@ -1,10 +1,19 @@
 {
+  "score_scale_max": 100,
+  "minimum_trade_score": 50,
+  "no_trade_grade": "C",
   "grades": {
-    "A++": 1.5,
-    "A+": 1.0,
-    "A": 0.5,
-    "B": 0.25,
-    "C": 0.0
+    "A++": 85,
+    "A+": 75,
+    "A": 60,
+    "B": 50,
+    "C": 0
   },
-  "no_trade_grade": "C"
+  "weights": {
+    "structure_h1": 30,
+    "break_retest_quality": 25,
+    "m15_confirmation": 20,
+    "regime_alignment": 15,
+    "execution_quality": 10
+  }
 }
