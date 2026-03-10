@@ -217,38 +217,65 @@ class PipelineRunner:
             return base_result
 
         execution_payload = getattr(execution_payload_result, "execution_payload", None)
-        execution_result = self.order_executor.execute(execution_payload=execution_payload)
+        execution_result = self.order_executor.submit(execution_payload=execution_payload)
         base_result.execution_result = execution_result
 
+        handled_result = None
         if self.execution_result_handler is not None and hasattr(self.execution_result_handler, "handle"):
-            base_result.handled_result = self.execution_result_handler.handle(
-                result=execution_result,
-                intent=intent,
-            )
+            handled_result = self.execution_result_handler.handle(result=execution_result)
+            base_result.handled_result = handled_result
 
-        if self.intent_state_manager is not None and hasattr(self.intent_state_manager, "transition"):
-            base_result.transition_result = self.intent_state_manager.transition(
+        transition_result = None
+        if (
+            handled_result is not None
+            and self.intent_state_manager is not None
+            and hasattr(self.intent_state_manager, "transition_from_execution")
+        ):
+            transition_result = self.intent_state_manager.transition_from_execution(
                 intent=intent,
-                event="submit_result_received",
-                details={"execution_result": getattr(execution_result, "to_dict", lambda: {})()},
+                handled_result=handled_result,
             )
+            base_result.transition_result = transition_result
 
-        if self.retry_policy is not None and hasattr(self.retry_policy, "decide"):
-            base_result.retry_decision = self.retry_policy.decide(
-                handled_result=base_result.handled_result,
-                intent=intent,
+        retry_decision = None
+        if (
+            handled_result is not None
+            and transition_result is not None
+            and self.retry_policy is not None
+            and hasattr(self.retry_policy, "decide")
+        ):
+            attempt_number = int(execution_request.get("attempt_number", 1))
+            retry_decision = self.retry_policy.decide(
+                handled_result=handled_result,
+                transition=transition_result,
+                attempt_number=attempt_number,
             )
+            base_result.retry_decision = retry_decision
 
-        if self.execution_audit_builder is not None and hasattr(self.execution_audit_builder, "build"):
-            base_result.audit_record = self.execution_audit_builder.build(
+        audit_result = None
+        if (
+            handled_result is not None
+            and transition_result is not None
+            and self.execution_audit_builder is not None
+            and hasattr(self.execution_audit_builder, "build")
+        ):
+            audit_result = self.execution_audit_builder.build(
                 intent=intent,
-                execution_payload=execution_payload,
-                execution_result=execution_result,
-                handled_result=base_result.handled_result,
-                transition_result=base_result.transition_result,
-                retry_decision=base_result.retry_decision,
+                handled_result=handled_result,
+                transition=transition_result,
             )
+            base_result.audit_record = audit_result
 
         base_result.stage = "execution_complete"
-        base_result.allowed = bool(getattr(execution_result, "accepted", getattr(execution_result, "success", True)))
+        base_result.allowed = bool(getattr(execution_result, "submitted", False))
+        base_result.details.update(
+            {
+                "execution_submitted": bool(getattr(execution_result, "submitted", False)),
+                "execution_status": getattr(execution_result, "status", "unknown"),
+                "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
+                "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
+                "retry_scheduled": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else False,
+                "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
+            }
+        )
         return base_result
