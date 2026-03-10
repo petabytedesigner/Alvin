@@ -62,7 +62,7 @@ class LevelDetector:
         self.range_width_atr_multiple = range_width_atr_multiple
         self.touch_tolerance_atr_multiple = touch_tolerance_atr_multiple
 
-    def detect(self, candles: Sequence[Candle], *, atr_value: float) -> dict:
+    def detect_levels(self, candles: Sequence[Candle], *, atr_value: float) -> dict[str, list[Level]]:
         if len(candles) < max((self.fractal_window * 2) + 1, self.min_range_candles):
             raise LevelDetectionError("not enough candles for level detection")
         if atr_value <= 0:
@@ -74,8 +74,15 @@ class LevelDetector:
         range_levels = self._detect_range_levels(candles, atr_value)
 
         return {
-            "swing_levels": [level.to_dict() for level in swing_levels],
-            "range_levels": [level.to_dict() for level in range_levels],
+            "swing_levels": swing_levels,
+            "range_levels": range_levels,
+        }
+
+    def detect(self, candles: Sequence[Candle], *, atr_value: float) -> dict:
+        detected = self.detect_levels(candles, atr_value=atr_value)
+        return {
+            "swing_levels": [level.to_dict() for level in detected["swing_levels"]],
+            "range_levels": [level.to_dict() for level in detected["range_levels"]],
             "metadata": {
                 "candles": len(candles),
                 "atr_value": atr_value,
