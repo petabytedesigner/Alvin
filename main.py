@@ -7,6 +7,7 @@ from pathlib import Path
 from broker.oanda_client import OandaClient
 from core.events import Event, utc_now_iso
 from monitoring.journal import Journal
+from runtime.component_factory import build_alvin_components
 from storage.database import Database
 from utils.config_loader import load_all_configs
 
@@ -62,6 +63,7 @@ def cmd_doctor() -> None:
     db = build_db(config)
     journal = _journal_if_enabled(config, db)
     broker = OandaClient()
+    components = build_alvin_components(config)
 
     broker_connectivity_required = _feature_enabled(config, "broker_connectivity_required", True)
     doctor_checks_broker = _feature_enabled(config, "doctor_checks_broker", False)
@@ -70,9 +72,17 @@ def cmd_doctor() -> None:
     checks = {
         "config_loaded": True,
         "db_ready": True,
+        "runtime_components_ready": True,
         "broker_connectivity_required": broker_connectivity_required,
         "oanda_env_configured": broker.is_configured() if should_check_broker else None,
         "broker_check_skipped": not should_check_broker,
+        "config_driven_components": {
+            "level_detector": type(components.level_detector).__name__,
+            "break_retest_validator": type(components.break_retest_validator).__name__,
+            "regime_classifier": type(components.regime_classifier).__name__,
+            "execution_quality_assessor": type(components.execution_quality_assessor).__name__,
+            "risk_gate": type(components.risk_gate).__name__,
+        },
     }
 
     if journal is not None:
