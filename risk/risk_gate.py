@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 
 @dataclass(slots=True)
@@ -13,13 +13,19 @@ class RiskDecision:
 
 
 class RiskGate:
-    GRADE_TO_RISK = {
-        "A++": 1.5,
-        "A+": 1.0,
-        "A": 0.5,
-        "B": 0.25,
-        "C": 0.0,
-    }
+    def __init__(self, *, grade_to_risk: Mapping[str, float] | None = None) -> None:
+        self.grade_to_risk = {
+            "A++": 1.5,
+            "A+": 1.0,
+            "A": 0.5,
+            "B": 0.25,
+            "C": 0.0,
+            **dict(grade_to_risk or {}),
+        }
+
+    @classmethod
+    def from_config(cls, risk_config: Mapping[str, Any]) -> "RiskGate":
+        return cls(grade_to_risk=risk_config.get("grade_risk_pct", {}))
 
     def decide(
         self,
@@ -40,9 +46,9 @@ class RiskGate:
         score_allowed: bool = True,
     ) -> RiskDecision:
         reasons: list[str] = []
-        proposed_risk = self.GRADE_TO_RISK.get(grade, 0.0)
+        proposed_risk = float(self.grade_to_risk.get(grade, 0.0))
 
-        if grade not in self.GRADE_TO_RISK:
+        if grade not in self.grade_to_risk:
             reasons.append("unknown_grade")
         if grade == "C" or proposed_risk <= 0.0:
             reasons.append("grade_blocked")
@@ -81,6 +87,7 @@ class RiskGate:
             reasons=reasons,
             details={
                 "grade": grade,
+                "grade_to_risk": dict(self.grade_to_risk),
                 "proposed_risk_pct": proposed_risk,
                 "daily_loss_pct": daily_loss_pct,
                 "daily_loss_limit_pct": daily_loss_limit_pct,

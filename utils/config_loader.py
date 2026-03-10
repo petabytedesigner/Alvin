@@ -107,6 +107,7 @@ def _validate_risk(data: Dict[str, Any]) -> None:
             "kill_switch_drawdown_pct",
             "loss_streak_reduction_pct",
             "loss_streak_pause_after",
+            "grade_risk_pct",
         ],
     )
 
@@ -129,6 +130,23 @@ def _validate_risk(data: Dict[str, Any]) -> None:
 
     if data["max_concurrent_trades"] == 0:
         raise ConfigValidationError("risk.max_concurrent_trades must be > 0")
+
+    grade_risk = data["grade_risk_pct"]
+    if not isinstance(grade_risk, dict) or not grade_risk:
+        raise ConfigValidationError("risk.grade_risk_pct must be a non-empty object")
+
+    required_grades = {"A++", "A+", "A", "B", "C"}
+    missing = sorted(required_grades - set(grade_risk.keys()))
+    if missing:
+        raise ConfigValidationError(f"risk.grade_risk_pct missing required grades: {', '.join(missing)}")
+
+    for grade, value in grade_risk.items():
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError(f"risk.grade_risk_pct.{grade} must be a non-negative number")
+
+    ordered = [grade_risk["A++"], grade_risk["A+"], grade_risk["A"], grade_risk["B"], grade_risk["C"]]
+    if ordered != sorted(ordered, reverse=True):
+        raise ConfigValidationError("risk grade risk bands must descend from A++ to C")
 
 
 def _validate_scoring(data: Dict[str, Any]) -> None:

@@ -4,5 +4,12 @@
   "max_concurrent_trades": 3,
   "kill_switch_drawdown_pct": 8.0,
   "loss_streak_reduction_pct": 30,
-  "loss_streak_pause_after": 3
+  "loss_streak_pause_after": 3,
+  "grade_risk_pct": {
+    "A++": 1.5,
+    "A+": 1.0,
+    "A": 0.5,
+    "B": 0.25,
+    "C": 0.0
+  }
 }
