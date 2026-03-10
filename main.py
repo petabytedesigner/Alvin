@@ -94,6 +94,57 @@ def cmd_doctor() -> None:
     db.close()
 
 
+def cmd_pipeline_smoke() -> None:
+    config = load_all_configs()
+    db = build_db(config)
+    journal = _journal_if_enabled(config, db)
+    components = build_alvin_components(config)
+    broker = getattr(components, "oanda_client", OandaClient())
+    runner = components.pipeline_runner
+
+    setup_to_intent_ready = all(
+        [
+            runner.setup_builder is not None,
+            runner.setup_evaluator is not None,
+            runner.order_intent_builder is not None,
+        ]
+    )
+    full_execution_wired = all(
+        [
+            runner.execution_payload_builder is not None,
+            runner.order_executor is not None,
+            runner.execution_result_handler is not None,
+            runner.intent_state_manager is not None,
+            runner.execution_audit_builder is not None,
+            runner.retry_policy is not None,
+        ]
+    )
+
+    report = {
+        "config_loaded": True,
+        "db_ready": True,
+        "pipeline_runner_ready": runner is not None,
+        "setup_to_intent_ready": setup_to_intent_ready,
+        "full_execution_wired": full_execution_wired,
+        "oanda_env_configured": broker.is_configured(),
+        "component_summary": {
+            "pipeline_runner": type(runner).__name__,
+            "execution_payload_builder": type(runner.execution_payload_builder).__name__ if runner.execution_payload_builder is not None else None,
+            "order_executor": type(runner.order_executor).__name__ if runner.order_executor is not None else None,
+            "execution_result_handler": type(runner.execution_result_handler).__name__ if runner.execution_result_handler is not None else None,
+            "intent_state_manager": type(runner.intent_state_manager).__name__ if runner.intent_state_manager is not None else None,
+            "execution_audit_builder": type(runner.execution_audit_builder).__name__ if runner.execution_audit_builder is not None else None,
+            "retry_policy": type(runner.retry_policy).__name__ if runner.retry_policy is not None else None,
+        },
+    }
+
+    if journal is not None:
+        journal.info("Pipeline smoke completed", report)
+
+    print(json.dumps(report, indent=2))
+    db.close()
+
+
 def cmd_show_config() -> None:
     config = load_all_configs()
     print(json.dumps(config, indent=2))
@@ -106,6 +157,7 @@ def main() -> None:
     sub.add_parser("bootstrap")
     sub.add_parser("doctor")
     sub.add_parser("show-config")
+    sub.add_parser("pipeline-smoke")
 
     args = parser.parse_args()
 
@@ -118,6 +170,8 @@ def main() -> None:
         cmd_doctor()
     elif args.command == "show-config":
         cmd_show_config()
+    elif args.command == "pipeline-smoke":
+        cmd_pipeline_smoke()
 
 
 if __name__ == "__main__":
