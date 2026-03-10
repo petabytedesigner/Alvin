@@ -101,5 +101,124 @@ class Database:
         )
         self.connection.commit()
 
+    def insert_order_intent(self, intent: Any) -> None:
+        payload = intent.payload if isinstance(getattr(intent, "payload", {}), dict) else {}
+        created_at_utc = getattr(intent, "created_at_utc", None) or ""
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO order_intents (intent_id, dedupe_key, instrument, state, side, payload_json, created_at_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent.intent_id,
+                intent.dedupe_key,
+                intent.instrument,
+                intent.state,
+                intent.side,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                created_at_utc,
+            ),
+        )
+        self.connection.commit()
+
+    def update_order_intent_state(
+        self,
+        *,
+        intent_id: str,
+        state: str,
+        payload: Dict[str, Any] | None = None,
+    ) -> None:
+        if payload is None:
+            self.connection.execute(
+                "UPDATE order_intents SET state = ? WHERE intent_id = ?",
+                (state, intent_id),
+            )
+        else:
+            self.connection.execute(
+                "UPDATE order_intents SET state = ?, payload_json = ? WHERE intent_id = ?",
+                (state, json.dumps(payload, ensure_ascii=False, sort_keys=True), intent_id),
+            )
+        self.connection.commit()
+
+    def insert_execution_result(self, *, intent_id: str, result: Any, ts_utc: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO execution_results
+            (intent_id, status, submitted, broker_http_status, broker_order_id, reasons_json, details_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent_id,
+                result.status,
+                1 if bool(result.submitted) else 0,
+                int(result.broker_http_status),
+                result.broker_order_id,
+                json.dumps(list(getattr(result, "reasons", [])), ensure_ascii=False, sort_keys=True),
+                json.dumps(dict(getattr(result, "details", {})), ensure_ascii=False, sort_keys=True),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+
+    def insert_intent_state_transition(self, *, intent_id: str, transition: Any, ts_utc: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO intent_state_transitions
+            (intent_id, previous_state, next_state, allowed, reasons_json, details_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent_id,
+                transition.previous_state,
+                transition.next_state,
+                1 if bool(transition.allowed) else 0,
+                json.dumps(list(getattr(transition, "reasons", [])), ensure_ascii=False, sort_keys=True),
+                json.dumps(dict(getattr(transition, "details", {})), ensure_ascii=False, sort_keys=True),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+
+    def insert_execution_audit(self, *, record: Any, ts_utc: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO execution_audits
+            (intent_id, correlation_id, instrument, side, previous_state, next_state, execution_category, accepted, payload_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.intent_id,
+                record.correlation_id,
+                record.instrument,
+                record.side,
+                record.previous_state,
+                record.next_state,
+                record.execution_category,
+                1 if bool(record.accepted) else 0,
+                json.dumps(dict(getattr(record, "payload", {})), ensure_ascii=False, sort_keys=True),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+
+    def insert_retry_decision(self, *, intent_id: str, decision: Any, ts_utc: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO retry_decisions
+            (intent_id, should_retry, retry_after_seconds, max_attempts, reason, details_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent_id,
+                1 if bool(decision.should_retry) else 0,
+                int(decision.retry_after_seconds),
+                int(decision.max_attempts),
+                decision.reason,
+                json.dumps(dict(getattr(decision, "details", {})), ensure_ascii=False, sort_keys=True),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+
     def close(self) -> None:
         self.connection.close()
