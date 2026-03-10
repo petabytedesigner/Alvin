@@ -3,12 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from broker.oanda_client import OandaClient
+from broker.order_executor import OrderExecutionResult
 from core.events import Event, utc_now_iso
+from intelligence.execution_quality import ExecutionQualityResult
+from intelligence.regime_classifier import RegimeAssessment
 from monitoring.journal import Journal
 from runtime.component_factory import build_alvin_components
 from storage.database import Database
+from strategy.break_retest_validator import BreakAssessment, BreakRetestResult, RetestAssessment
+from strategy.level_detection import Level
+from strategy.m15_confirmation import ConfirmationResult
 from utils.config_loader import load_all_configs
 
 
@@ -102,44 +109,201 @@ def cmd_pipeline_smoke() -> None:
     broker = getattr(components, "oanda_client", OandaClient())
     runner = components.pipeline_runner
 
-    setup_to_intent_ready = all(
-        [
-            runner.setup_builder is not None,
-            runner.setup_evaluator is not None,
-            runner.order_intent_builder is not None,
-        ]
-    )
-    full_execution_wired = all(
-        [
-            runner.execution_payload_builder is not None,
-            runner.order_executor is not None,
-            runner.execution_result_handler is not None,
-            runner.intent_state_manager is not None,
-            runner.execution_audit_builder is not None,
-            runner.retry_policy is not None,
-        ]
-    )
-
     report = {
         "config_loaded": True,
         "db_ready": True,
-        "pipeline_runner_ready": runner is not None,
-        "setup_to_intent_ready": setup_to_intent_ready,
-        "full_execution_wired": full_execution_wired,
+        **runner.readiness_report(),
         "oanda_env_configured": broker.is_configured(),
-        "component_summary": {
-            "pipeline_runner": type(runner).__name__,
-            "execution_payload_builder": type(runner.execution_payload_builder).__name__ if runner.execution_payload_builder is not None else None,
-            "order_executor": type(runner.order_executor).__name__ if runner.order_executor is not None else None,
-            "execution_result_handler": type(runner.execution_result_handler).__name__ if runner.execution_result_handler is not None else None,
-            "intent_state_manager": type(runner.intent_state_manager).__name__ if runner.intent_state_manager is not None else None,
-            "execution_audit_builder": type(runner.execution_audit_builder).__name__ if runner.execution_audit_builder is not None else None,
-            "retry_policy": type(runner.retry_policy).__name__ if runner.retry_policy is not None else None,
-        },
     }
 
     if journal is not None:
         journal.info("Pipeline smoke completed", report)
+
+    print(json.dumps(report, indent=2))
+    db.close()
+
+
+def cmd_pipeline_selftest() -> None:
+    config = load_all_configs()
+    db = build_db(config)
+    journal = _journal_if_enabled(config, db)
+    components = build_alvin_components(config)
+    runner = components.pipeline_runner
+
+    level = Level(
+        level_id="selftest-level-1",
+        kind="swing_high",
+        price=1.1000,
+        touches=3,
+        first_index=10,
+        last_index=40,
+        confidence=0.82,
+        metadata={"source": "selftest"},
+    )
+
+    break_assessment = BreakAssessment(
+        valid=True,
+        direction="long",
+        reason="valid_break",
+        close_price=1.1012,
+        body_size=0.0012,
+        atr=0.0015,
+        body_atr_ratio=0.8,
+        counter_wick_ratio=0.2,
+        details={"source": "selftest"},
+    )
+
+    retest_assessment = RetestAssessment(
+        valid=True,
+        touched_zone=True,
+        held_zone=True,
+        reason="valid_retest",
+        zone_low=1.0997,
+        zone_high=1.1003,
+        retest_price=1.1004,
+        bars_since_break=2,
+        details={"source": "selftest"},
+    )
+
+    break_retest = BreakRetestResult(
+        valid=True,
+        direction="long",
+        reason="valid_break_retest",
+        break_assessment=break_assessment,
+        retest_assessment=retest_assessment,
+        details={"source": "selftest"},
+    )
+
+    confirmation = ConfirmationResult(
+        confirmed=True,
+        confirmation_type="mss_plus_rejection",
+        confidence=0.75,
+        reasons=["market_structure_shift", "rejection_candle"],
+        details={"source": "selftest"},
+    )
+
+    regime_assessment = RegimeAssessment(
+        regime="trend",
+        confidence=0.78,
+        details={"source": "selftest"},
+    )
+
+    execution_quality = ExecutionQualityResult(
+        quality="clean",
+        score=0.91,
+        allowed=True,
+        reasons=["execution_clean"],
+        details={"source": "selftest"},
+    )
+
+    portfolio_result = SimpleNamespace(
+        allowed=True,
+        pressure_score=0.10,
+        reasons=["portfolio_ok"],
+    )
+
+    evaluation_inputs = {
+        "score_allowed": True,
+        "score_value": 78.0,
+        "regime_assessment": regime_assessment,
+        "execution_result": execution_quality,
+        "portfolio_result": portfolio_result,
+        "daily_loss_pct": 0.25,
+        "daily_loss_limit_pct": config["risk"]["daily_loss_limit_pct"],
+        "open_risk_pct": 0.25,
+        "max_open_risk_pct": config["risk"]["max_open_risk_pct"],
+        "concurrent_trades": 0,
+        "max_concurrent_trades": config["risk"]["max_concurrent_trades"],
+        "kill_switch_active": False,
+        "cooldown_active": False,
+        "news_lock_active": False,
+        "session_allowed": True,
+    }
+
+    setup_to_intent = runner.run_setup_to_intent(
+        instrument="EUR_USD",
+        timeframe="H1",
+        side="long",
+        setup_type="break_retest",
+        level=level,
+        break_retest=break_retest,
+        confirmation=confirmation,
+        atr_value=0.0015,
+        score_hint=78.0,
+        grade="A+",
+        evaluation_inputs=evaluation_inputs,
+        session="london",
+        post_news=False,
+        metadata={"source": "pipeline_selftest"},
+        ttl_minutes=60,
+        correlation_id="selftest-correlation",
+        intent_notes={"mode": "selftest"},
+    )
+
+    payload_result = None
+    handled_result = None
+    transition_result = None
+    retry_decision = None
+    audit_result = None
+
+    if setup_to_intent.allowed and setup_to_intent.intent_result and setup_to_intent.intent_result.intent is not None:
+        intent = setup_to_intent.intent_result.intent
+
+        payload_result = components.execution_payload_builder.build(
+            intent=intent,
+            units=1000,
+            order_type="market",
+            time_in_force="FOK",
+        )
+
+        synthetic_execution = OrderExecutionResult(
+            submitted=False,
+            status="transport_error",
+            broker_http_status=0,
+            broker_order_id=None,
+            reasons=["broker_submit_exception"],
+            details={"source": "pipeline_selftest"},
+        )
+
+        handled_result = components.execution_result_handler.handle(synthetic_execution)
+        transition_result = components.intent_state_manager.transition_from_execution(
+            intent=intent,
+            handled_result=handled_result,
+        )
+        retry_decision = components.retry_policy.decide(
+            handled_result=handled_result,
+            transition=transition_result,
+            attempt_number=1,
+        )
+        audit_result = components.execution_audit_builder.build(
+            intent=intent,
+            handled_result=handled_result,
+            transition=transition_result,
+        )
+
+    report = {
+        "config_loaded": True,
+        "db_ready": True,
+        **runner.readiness_report(),
+        "selftest": {
+            "setup_to_intent_stage": setup_to_intent.stage,
+            "setup_to_intent_allowed": setup_to_intent.allowed,
+            "intent_created": bool(
+                setup_to_intent.intent_result is not None
+                and setup_to_intent.intent_result.intent is not None
+            ),
+            "payload_allowed": bool(getattr(payload_result, "allowed", False)) if payload_result is not None else None,
+            "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
+            "transition_allowed": bool(getattr(transition_result, "allowed", False)) if transition_result is not None else None,
+            "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
+            "retry_should_retry": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else None,
+            "retry_reason": getattr(retry_decision, "reason", None) if retry_decision is not None else None,
+            "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
+        },
+    }
+
+    if journal is not None:
+        journal.info("Pipeline selftest completed", report)
 
     print(json.dumps(report, indent=2))
     db.close()
@@ -158,6 +322,7 @@ def main() -> None:
     sub.add_parser("doctor")
     sub.add_parser("show-config")
     sub.add_parser("pipeline-smoke")
+    sub.add_parser("pipeline-selftest")
 
     args = parser.parse_args()
 
@@ -172,6 +337,8 @@ def main() -> None:
         cmd_show_config()
     elif args.command == "pipeline-smoke":
         cmd_pipeline_smoke()
+    elif args.command == "pipeline-selftest":
+        cmd_pipeline_selftest()
 
 
 if __name__ == "__main__":
