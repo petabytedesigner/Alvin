@@ -253,6 +253,10 @@ class PipelineRunner:
             )
             result.transition_result = transition_result
 
+            if transition_result.allowed and hasattr(intent, "transition"):
+                transition_reason = transition_result.reasons[-1] if transition_result.reasons else None
+                intent.transition(transition_result.next_state, reason=transition_reason)
+
         retry_decision = None
         if (
             handled_result is not None
@@ -290,6 +294,8 @@ class PipelineRunner:
                 "execution_status": getattr(execution_result, "status", "unknown"),
                 "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
                 "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
+                "intent_state": getattr(intent, "state", None),
+                "intent_history": list(getattr(intent, "history", [])) if hasattr(intent, "history") else None,
                 "retry_scheduled": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else False,
                 "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
             }
