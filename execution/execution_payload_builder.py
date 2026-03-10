@@ -41,6 +41,7 @@ class ExecutionPayloadBuildResult:
 class ExecutionPayloadBuilder:
     VALID_ORDER_TYPES = {"market"}
     VALID_TIME_IN_FORCE = {"FOK", "IOC"}
+    SUBMITTABLE_STATES = {"intent_created", "submit_started", "retryable_failure"}
 
     def build(
         self,
@@ -62,6 +63,7 @@ class ExecutionPayloadBuilder:
             "grade": intent.grade,
             "score": intent.score,
             "dedupe_key": intent.dedupe_key,
+            "intent_state": intent.state,
         }
 
         order_type_normalized = order_type.strip().lower()
@@ -69,11 +71,13 @@ class ExecutionPayloadBuilder:
 
         if units <= 0:
             reasons.append("units_invalid")
+        if intent.side not in {"long", "short"}:
+            reasons.append("side_invalid")
         if order_type_normalized not in self.VALID_ORDER_TYPES:
             reasons.append("order_type_invalid")
         if tif_normalized not in self.VALID_TIME_IN_FORCE:
             reasons.append("time_in_force_invalid")
-        if intent.state != "intent_created":
+        if intent.state not in self.SUBMITTABLE_STATES:
             reasons.append("intent_state_not_submittable")
 
         signed_units = units if intent.side == "long" else -units
@@ -131,6 +135,7 @@ class ExecutionPayloadBuilder:
                 "has_price_bound": price_bound is not None,
                 "has_stop_loss": stop_loss is not None,
                 "has_take_profit": take_profit is not None,
+                "resubmission": intent.state in {"submit_started", "retryable_failure"},
             }
         )
 
