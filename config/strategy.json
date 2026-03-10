@@ -1,0 +1,17 @@
+{
+  "level_detection": {
+    "fractal_window": 1,
+    "min_swing_touches": 2,
+    "min_swing_spacing": 20,
+    "min_range_candles": 15,
+    "range_width_atr_multiple": 1.5,
+    "touch_tolerance_atr_multiple": 0.15
+  },
+  "break_retest": {
+    "min_body_atr_ratio": 0.60,
+    "max_counter_wick_ratio": 0.40,
+    "base_retest_zone_atr_ratio": 0.20,
+    "min_retest_bars": 1,
+    "max_retest_bars": 10
+  }
+}

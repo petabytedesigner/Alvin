@@ -11,6 +11,8 @@ CONFIG_FILES = [
     "risk.json",
     "scoring.json",
     "instruments.json",
+    "strategy.json",
+    "regime.json",
 ]
 
 
@@ -35,7 +37,7 @@ def load_all_configs(config_dir: str = "config") -> Dict[str, Any]:
 
 
 def _validate_configs(config: Dict[str, Any]) -> None:
-    for section in ("global", "features", "risk", "scoring", "instruments"):
+    for section in ("global", "features", "risk", "scoring", "instruments", "strategy", "regime"):
         if section not in config:
             raise ConfigValidationError(f"Missing config section: {section}")
         if not isinstance(config[section], dict):
@@ -46,6 +48,8 @@ def _validate_configs(config: Dict[str, Any]) -> None:
     _validate_risk(config["risk"])
     _validate_scoring(config["scoring"])
     _validate_instruments(config["instruments"])
+    _validate_strategy(config["strategy"])
+    _validate_regime(config["regime"])
 
 
 def _require_keys(section_name: str, data: Dict[str, Any], keys: list[str]) -> None:
@@ -126,7 +130,13 @@ def _validate_risk(data: Dict[str, Any]) -> None:
 
 
 def _validate_scoring(data: Dict[str, Any]) -> None:
-    _require_keys("scoring", data, ["grades", "no_trade_grade"])
+    _require_keys("scoring", data, ["score_scale_max", "minimum_trade_score", "grades", "no_trade_grade", "weights"])
+
+    if not isinstance(data["score_scale_max"], (int, float)) or data["score_scale_max"] <= 0:
+        raise ConfigValidationError("scoring.score_scale_max must be > 0")
+    if not isinstance(data["minimum_trade_score"], (int, float)) or data["minimum_trade_score"] < 0:
+        raise ConfigValidationError("scoring.minimum_trade_score must be >= 0")
+
     grades = data["grades"]
     if not isinstance(grades, dict) or not grades:
         raise ConfigValidationError("scoring.grades must be a non-empty object")
@@ -140,9 +150,24 @@ def _validate_scoring(data: Dict[str, Any]) -> None:
         if not isinstance(value, (int, float)) or value < 0:
             raise ConfigValidationError(f"scoring.grades.{grade} must be a non-negative number")
 
+    ordered = [grades["A++"], grades["A+"], grades["A"], grades["B"], grades["C"]]
+    if ordered != sorted(ordered, reverse=True):
+        raise ConfigValidationError("scoring grade thresholds must descend from A++ to C")
+
     no_trade_grade = data["no_trade_grade"]
     if no_trade_grade not in grades:
         raise ConfigValidationError("scoring.no_trade_grade must exist in scoring.grades")
+
+    weights = data["weights"]
+    if not isinstance(weights, dict) or not weights:
+        raise ConfigValidationError("scoring.weights must be a non-empty object")
+    total_weight = 0.0
+    for key, value in weights.items():
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError(f"scoring.weights.{key} must be a non-negative number")
+        total_weight += float(value)
+    if round(total_weight, 6) != round(float(data["score_scale_max"]), 6):
+        raise ConfigValidationError("sum of scoring.weights must equal scoring.score_scale_max")
 
 
 def _validate_instruments(data: Dict[str, Any]) -> None:
@@ -160,3 +185,104 @@ def _validate_instruments(data: Dict[str, Any]) -> None:
 
     if len(set(all_symbols)) != len(all_symbols):
         raise ConfigValidationError("instruments contains duplicate symbols across groups")
+
+
+def _validate_strategy(data: Dict[str, Any]) -> None:
+    _require_keys("strategy", data, ["level_detection", "break_retest"])
+    level_detection = data["level_detection"]
+    break_retest = data["break_retest"]
+
+    if not isinstance(level_detection, dict):
+        raise ConfigValidationError("strategy.level_detection must be an object")
+    if not isinstance(break_retest, dict):
+        raise ConfigValidationError("strategy.break_retest must be an object")
+
+    _require_keys(
+        "strategy.level_detection",
+        level_detection,
+        [
+            "fractal_window",
+            "min_swing_touches",
+            "min_swing_spacing",
+            "min_range_candles",
+            "range_width_atr_multiple",
+            "touch_tolerance_atr_multiple",
+        ],
+    )
+    _require_keys(
+        "strategy.break_retest",
+        break_retest,
+        [
+            "min_body_atr_ratio",
+            "max_counter_wick_ratio",
+            "base_retest_zone_atr_ratio",
+            "min_retest_bars",
+            "max_retest_bars",
+        ],
+    )
+
+    for key in ("fractal_window", "min_swing_touches", "min_swing_spacing", "min_range_candles"):
+        value = level_detection[key]
+        if not isinstance(value, int) or value < 1:
+            raise ConfigValidationError(f"strategy.level_detection.{key} must be an integer >= 1")
+
+    for key in ("range_width_atr_multiple", "touch_tolerance_atr_multiple"):
+        value = level_detection[key]
+        if not isinstance(value, (int, float)) or value <= 0:
+            raise ConfigValidationError(f"strategy.level_detection.{key} must be > 0")
+
+    for key in ("min_body_atr_ratio", "max_counter_wick_ratio", "base_retest_zone_atr_ratio"):
+        value = break_retest[key]
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError(f"strategy.break_retest.{key} must be >= 0")
+
+    for key in ("min_retest_bars", "max_retest_bars"):
+        value = break_retest[key]
+        if not isinstance(value, int) or value < 1:
+            raise ConfigValidationError(f"strategy.break_retest.{key} must be an integer >= 1")
+
+    if break_retest["max_retest_bars"] < break_retest["min_retest_bars"]:
+        raise ConfigValidationError("strategy.break_retest.max_retest_bars must be >= min_retest_bars")
+
+
+def _validate_regime(data: Dict[str, Any]) -> None:
+    _require_keys("regime", data, ["thresholds", "labels"])
+    thresholds = data["thresholds"]
+    labels = data["labels"]
+
+    if not isinstance(thresholds, dict):
+        raise ConfigValidationError("regime.thresholds must be an object")
+    if not isinstance(labels, dict):
+        raise ConfigValidationError("regime.labels must be an object")
+
+    _require_keys(
+        "regime.thresholds",
+        thresholds,
+        [
+            "expansion_atr_ratio",
+            "trend_strength_min",
+            "compression_range_tightness",
+            "compression_atr_ratio_max",
+            "range_tightness_min",
+        ],
+    )
+
+    for key, value in thresholds.items():
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError(f"regime.thresholds.{key} must be a non-negative number")
+
+    required_labels = {
+        "post_news_disorder",
+        "expansion_trend",
+        "compression",
+        "trend",
+        "range",
+        "mixed",
+    }
+    missing = sorted(required_labels - set(labels.keys()))
+    if missing:
+        raise ConfigValidationError(f"regime.labels missing required labels: {', '.join(missing)}")
+
+    for key, value in labels.items():
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigValidationError(f"regime.labels.{key} must be a non-empty string")

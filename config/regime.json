@@ -1,0 +1,17 @@
+{
+  "thresholds": {
+    "expansion_atr_ratio": 1.35,
+    "trend_strength_min": 0.60,
+    "compression_range_tightness": 0.75,
+    "compression_atr_ratio_max": 0.85,
+    "range_tightness_min": 0.60
+  },
+  "labels": {
+    "post_news_disorder": "post_news_disorder",
+    "expansion_trend": "expansion_trend",
+    "compression": "compression",
+    "trend": "trend",
+    "range": "range",
+    "mixed": "mixed"
+  }
+}
