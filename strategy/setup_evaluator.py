@@ -44,6 +44,8 @@ class SetupEvaluator:
         news_lock_active: bool,
         session_allowed: bool,
     ) -> SetupEvaluationResult:
+        bounded_score_value = round(max(0.0, min(100.0, float(score_value))), 2)
+
         if not setup_result.allowed or setup_result.candidate is None:
             reasons = list(setup_result.reasons) or ["setup_not_ready"]
             blocked_risk = self.risk_gate.decide(
@@ -70,7 +72,7 @@ class SetupEvaluator:
                 state="rejected",
                 conviction="blocked",
                 reasons=reasons,
-                details={"stage": "setup"},
+                details={"stage": "setup", "score_value": bounded_score_value},
             )
             return SetupEvaluationResult(
                 allowed=False,
@@ -78,7 +80,7 @@ class SetupEvaluator:
                 acceptance=blocked_acceptance,
                 risk=blocked_risk,
                 reasons=reasons,
-                details={"candidate_id": None},
+                details={"candidate_id": None, "score_value": bounded_score_value},
             )
 
         candidate = setup_result.candidate
@@ -104,7 +106,7 @@ class SetupEvaluator:
             candidate_id=candidate.candidate_id,
             instrument=candidate.instrument,
             score_allowed=score_allowed,
-            score_value=score_value,
+            score_value=bounded_score_value,
             regime_assessment=regime_assessment,
             execution_result=execution_result,
             portfolio_result=portfolio_result,
@@ -144,6 +146,8 @@ class SetupEvaluator:
                 "instrument": candidate.instrument,
                 "side": candidate.side,
                 "grade": grade,
+                "score_value": bounded_score_value,
+                "score_normalized": round(bounded_score_value / 100.0, 4),
                 "conviction": acceptance.conviction,
                 "risk_pct": final_risk.risk_pct,
             },

@@ -45,13 +45,15 @@ class StrategySetupBuilder:
         metadata: Dict[str, Any] | None = None,
     ) -> SetupBuildResult:
         reasons: list[str] = []
+        bounded_score_hint = round(max(0.0, min(100.0, float(score_hint))), 2)
         details: Dict[str, Any] = {
             "instrument": instrument,
             "timeframe": timeframe,
             "side": side,
             "setup_type": setup_type,
             "atr_value": atr_value,
-            "score_hint": score_hint,
+            "score_hint": bounded_score_hint,
+            "score_hint_normalized": round(bounded_score_hint / 100.0, 4),
             "level_id": level.level_id,
             "level_kind": level.kind,
             "level_price": level.price,
@@ -77,7 +79,7 @@ class StrategySetupBuilder:
             reasons.append("m15_confirmation_not_valid")
         if atr_value <= 0:
             reasons.append("atr_invalid")
-        if score_hint <= 0:
+        if bounded_score_hint <= 0:
             reasons.append("score_hint_invalid")
         if side not in {"long", "short"}:
             reasons.append("side_invalid")
@@ -95,7 +97,7 @@ class StrategySetupBuilder:
             instrument=instrument,
             timeframe=timeframe,
             side=side,
-            score=score_hint,
+            score=bounded_score_hint,
             grade=grade,
             regime="unknown",
             trigger_reference=trigger_ref,

@@ -26,6 +26,7 @@ class OrderIntentBuilder:
         ttl_minutes: int = 60,
         correlation_id: str | None = None,
         notes: Dict[str, Any] | None = None,
+        minimum_trade_score: float = 50.0,
     ) -> OrderIntentBuildResult:
         reasons: list[str] = []
         details: Dict[str, Any] = {
@@ -34,6 +35,8 @@ class OrderIntentBuilder:
             "side": candidate.side,
             "grade": candidate.grade,
             "score": candidate.score,
+            "score_normalized": candidate.normalized_score,
+            "minimum_trade_score": minimum_trade_score,
             "setup_type": candidate.setup_type,
         }
 
@@ -47,7 +50,7 @@ class OrderIntentBuilder:
                 details=details,
             )
 
-        if candidate.grade == "C" or candidate.score <= 0.0:
+        if candidate.grade == "C" or candidate.score < float(minimum_trade_score):
             reasons.append("candidate_not_tradeable")
             return OrderIntentBuildResult(
                 allowed=False,
