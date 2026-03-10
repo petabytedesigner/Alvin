@@ -69,20 +69,16 @@ class ExecutionAuditBuilder:
                 details=details,
             )
 
+        intent_snapshot = intent.to_dict() if hasattr(intent, "to_dict") else {
+            "intent_id": intent.intent_id,
+            "dedupe_key": intent.dedupe_key,
+            "instrument": intent.instrument,
+            "side": intent.side,
+            "state": intent.state,
+        }
+
         payload = {
-            "intent": {
-                "intent_id": intent.intent_id,
-                "dedupe_key": intent.dedupe_key,
-                "instrument": intent.instrument,
-                "side": intent.side,
-                "timeframe": intent.timeframe,
-                "setup_type": intent.setup_type,
-                "grade": intent.grade,
-                "score": intent.score,
-                "state": intent.state,
-                "correlation_id": intent.correlation_id,
-                "payload": dict(intent.payload),
-            },
+            "intent": intent_snapshot,
             "execution": handled_result.to_dict(),
             "transition": transition.to_dict(),
         }
