@@ -8,6 +8,7 @@ from intelligence.acceptance_pipeline import AcceptancePipeline
 from intelligence.execution_quality import ExecutionQualityAssessor
 from intelligence.regime_classifier import RegimeClassifier
 from risk.risk_gate import RiskGate
+from runtime.pipeline_runner import PipelineRunner
 from strategy.break_retest_validator import BreakRetestValidator
 from strategy.level_detection import LevelDetector
 from strategy.setup_builder import StrategySetupBuilder
@@ -27,6 +28,7 @@ class AlvinComponents:
     setup_builder: StrategySetupBuilder
     setup_evaluator: SetupEvaluator
     order_intent_builder: OrderIntentBuilder
+    pipeline_runner: PipelineRunner
 
 
 def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinComponents:
@@ -41,6 +43,12 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
     setup_builder = StrategySetupBuilder()
     setup_evaluator = SetupEvaluator(acceptance_pipeline=acceptance_pipeline, risk_gate=risk_gate)
     order_intent_builder = OrderIntentBuilder()
+    pipeline_runner = PipelineRunner(
+        config=resolved_config,
+        setup_builder=setup_builder,
+        setup_evaluator=setup_evaluator,
+        order_intent_builder=order_intent_builder,
+    )
 
     return AlvinComponents(
         config=resolved_config,
@@ -53,4 +61,5 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
         setup_builder=setup_builder,
         setup_evaluator=setup_evaluator,
         order_intent_builder=order_intent_builder,
+        pipeline_runner=pipeline_runner,
     )

@@ -73,6 +73,7 @@ def cmd_doctor() -> None:
         "config_loaded": True,
         "db_ready": True,
         "runtime_components_ready": True,
+        "pipeline_runner_ready": True,
         "broker_connectivity_required": broker_connectivity_required,
         "oanda_env_configured": broker.is_configured() if should_check_broker else None,
         "broker_check_skipped": not should_check_broker,
@@ -82,6 +83,7 @@ def cmd_doctor() -> None:
             "regime_classifier": type(components.regime_classifier).__name__,
             "execution_quality_assessor": type(components.execution_quality_assessor).__name__,
             "risk_gate": type(components.risk_gate).__name__,
+            "pipeline_runner": type(components.pipeline_runner).__name__,
         },
     }
 
