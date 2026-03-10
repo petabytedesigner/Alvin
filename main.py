@@ -63,12 +63,16 @@ def cmd_doctor() -> None:
     journal = _journal_if_enabled(config, db)
     broker = OandaClient()
 
+    broker_connectivity_required = _feature_enabled(config, "broker_connectivity_required", True)
     doctor_checks_broker = _feature_enabled(config, "doctor_checks_broker", False)
+    should_check_broker = broker_connectivity_required or doctor_checks_broker
+
     checks = {
         "config_loaded": True,
         "db_ready": True,
-        "oanda_env_configured": broker.is_configured() if doctor_checks_broker else None,
-        "broker_check_skipped": not doctor_checks_broker,
+        "broker_connectivity_required": broker_connectivity_required,
+        "oanda_env_configured": broker.is_configured() if should_check_broker else None,
+        "broker_check_skipped": not should_check_broker,
     }
 
     if journal is not None:
