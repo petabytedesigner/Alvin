@@ -13,6 +13,7 @@ CONFIG_FILES = [
     "instruments.json",
     "strategy.json",
     "regime.json",
+    "execution.json",
 ]
 
 
@@ -37,7 +38,7 @@ def load_all_configs(config_dir: str = "config") -> Dict[str, Any]:
 
 
 def _validate_configs(config: Dict[str, Any]) -> None:
-    for section in ("global", "features", "risk", "scoring", "instruments", "strategy", "regime"):
+    for section in ("global", "features", "risk", "scoring", "instruments", "strategy", "regime", "execution"):
         if section not in config:
             raise ConfigValidationError(f"Missing config section: {section}")
         if not isinstance(config[section], dict):
@@ -50,6 +51,7 @@ def _validate_configs(config: Dict[str, Any]) -> None:
     _validate_instruments(config["instruments"])
     _validate_strategy(config["strategy"])
     _validate_regime(config["regime"])
+    _validate_execution(config["execution"])
 
 
 def _require_keys(section_name: str, data: Dict[str, Any], keys: list[str]) -> None:
@@ -286,3 +288,36 @@ def _validate_regime(data: Dict[str, Any]) -> None:
     for key, value in labels.items():
         if not isinstance(value, str) or not value.strip():
             raise ConfigValidationError(f"regime.labels.{key} must be a non-empty string")
+
+
+def _validate_execution(data: Dict[str, Any]) -> None:
+    _require_keys(
+        "execution",
+        data,
+        [
+            "spread_ratio_warn",
+            "slippage_warn",
+            "timing_delay_warn_seconds",
+            "adverse_selection_warn",
+            "score_floor",
+            "quality_bands",
+        ],
+    )
+
+    for key in ("spread_ratio_warn", "slippage_warn", "timing_delay_warn_seconds", "adverse_selection_warn", "score_floor"):
+        value = data[key]
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError(f"execution.{key} must be a non-negative number")
+
+    bands = data["quality_bands"]
+    if not isinstance(bands, dict):
+        raise ConfigValidationError("execution.quality_bands must be an object")
+
+    _require_keys("execution.quality_bands", bands, ["clean", "acceptable", "fragile"])
+    for key in ("clean", "acceptable", "fragile"):
+        value = bands[key]
+        if not isinstance(value, (int, float)) or value < 0 or value > 1:
+            raise ConfigValidationError(f"execution.quality_bands.{key} must be between 0 and 1")
+
+    if not (bands["clean"] >= bands["acceptable"] >= bands["fragile"] >= data["score_floor"]):
+        raise ConfigValidationError("execution quality bands must descend clean >= acceptable >= fragile >= score_floor")

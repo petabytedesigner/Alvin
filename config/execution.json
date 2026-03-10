@@ -1,0 +1,12 @@
+{
+  "spread_ratio_warn": 1.0,
+  "slippage_warn": 0.20,
+  "timing_delay_warn_seconds": 3.0,
+  "adverse_selection_warn": 0.55,
+  "score_floor": 0.50,
+  "quality_bands": {
+    "clean": 0.85,
+    "acceptable": 0.65,
+    "fragile": 0.50
+  }
+}
