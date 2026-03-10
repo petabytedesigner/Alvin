@@ -18,15 +18,41 @@ def build_db(config: dict) -> Database:
     return db
 
 
+def _feature_enabled(config: dict, name: str, default: bool = False) -> bool:
+    return bool(config.get("features", {}).get(name, default))
+
+
+def _journal_if_enabled(config: dict, db: Database) -> Journal | None:
+    if _feature_enabled(config, "journal_enabled", True):
+        return Journal(db)
+    return None
+
+
 def cmd_bootstrap() -> None:
     config = load_all_configs()
     db = build_db(config)
-    journal = Journal(db)
+    journal = _journal_if_enabled(config, db)
 
-    snapshot_hash = db.snapshot_config(utc_now_iso(), config)
-    event = Event(event_type="BOOT", module="main", payload={"config_sha256": snapshot_hash})
+    snapshot_hash = None
+    if _feature_enabled(config, "bootstrap_writes_snapshot", True):
+        snapshot_hash = db.snapshot_config(utc_now_iso(), config)
+
+    event = Event(
+        event_type="BOOT",
+        module="main",
+        payload={"config_sha256": snapshot_hash},
+    )
     db.insert_event(event.to_record())
-    journal.info("Bootstrap completed", {"config_sha256": snapshot_hash})
+
+    if journal is not None:
+        journal.info(
+            "Bootstrap completed",
+            {
+                "config_sha256": snapshot_hash,
+                "snapshot_written": snapshot_hash is not None,
+            },
+        )
+
     print("bootstrap: ok")
     db.close()
 
@@ -34,16 +60,20 @@ def cmd_bootstrap() -> None:
 def cmd_doctor() -> None:
     config = load_all_configs()
     db = build_db(config)
-    journal = Journal(db)
+    journal = _journal_if_enabled(config, db)
     broker = OandaClient()
 
+    doctor_checks_broker = _feature_enabled(config, "doctor_checks_broker", False)
     checks = {
         "config_loaded": True,
         "db_ready": True,
-        "oanda_env_configured": broker.is_configured(),
+        "oanda_env_configured": broker.is_configured() if doctor_checks_broker else None,
+        "broker_check_skipped": not doctor_checks_broker,
     }
 
-    journal.info("Doctor check completed", checks)
+    if journal is not None:
+        journal.info("Doctor check completed", checks)
+
     print(json.dumps(checks, indent=2))
     db.close()
 
