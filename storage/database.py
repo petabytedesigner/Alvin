@@ -102,8 +102,7 @@ class Database:
         self.connection.commit()
 
     def insert_order_intent(self, intent: Any) -> None:
-        payload = intent.payload if isinstance(getattr(intent, "payload", {}), dict) else {}
-        created_at_utc = getattr(intent, "created_at_utc", None) or ""
+        snapshot = self._serialize_order_intent(intent)
         self.connection.execute(
             """
             INSERT OR REPLACE INTO order_intents (intent_id, dedupe_key, instrument, state, side, payload_json, created_at_utc)
@@ -115,8 +114,8 @@ class Database:
                 intent.instrument,
                 intent.state,
                 intent.side,
-                json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                created_at_utc,
+                json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+                snapshot.get("created_at_utc", ""),
             ),
         )
         self.connection.commit()
@@ -128,16 +127,27 @@ class Database:
         state: str,
         payload: Dict[str, Any] | None = None,
     ) -> None:
-        if payload is None:
-            self.connection.execute(
-                "UPDATE order_intents SET state = ? WHERE intent_id = ?",
-                (state, intent_id),
-            )
-        else:
-            self.connection.execute(
-                "UPDATE order_intents SET state = ?, payload_json = ? WHERE intent_id = ?",
-                (state, json.dumps(payload, ensure_ascii=False, sort_keys=True), intent_id),
-            )
+        current_payload_json = self.connection.execute(
+            "SELECT payload_json FROM order_intents WHERE intent_id = ?",
+            (intent_id,),
+        ).fetchone()
+
+        current_payload: Dict[str, Any] = {}
+        if current_payload_json and current_payload_json["payload_json"]:
+            try:
+                current_payload = json.loads(current_payload_json["payload_json"])
+            except Exception:
+                current_payload = {}
+
+        merged_payload = dict(current_payload)
+        merged_payload["state"] = state
+        if payload:
+            merged_payload["payload"] = payload
+
+        self.connection.execute(
+            "UPDATE order_intents SET state = ?, payload_json = ? WHERE intent_id = ?",
+            (state, json.dumps(merged_payload, ensure_ascii=False, sort_keys=True), intent_id),
+        )
         self.connection.commit()
 
     def insert_execution_result(self, *, intent_id: str, result: Any, ts_utc: str) -> None:
@@ -219,6 +229,31 @@ class Database:
             ),
         )
         self.connection.commit()
+
+    def _serialize_order_intent(self, intent: Any) -> Dict[str, Any]:
+        if hasattr(intent, "to_dict") and callable(intent.to_dict):
+            snapshot = intent.to_dict()
+            if isinstance(snapshot, dict):
+                return snapshot
+        return {
+            "intent_id": getattr(intent, "intent_id", ""),
+            "dedupe_key": getattr(intent, "dedupe_key", ""),
+            "instrument": getattr(intent, "instrument", ""),
+            "state": getattr(intent, "state", ""),
+            "side": getattr(intent, "side", ""),
+            "timeframe": getattr(intent, "timeframe", ""),
+            "setup_type": getattr(intent, "setup_type", ""),
+            "trigger_reference": getattr(intent, "trigger_reference", ""),
+            "score": getattr(intent, "score", 0.0),
+            "grade": getattr(intent, "grade", ""),
+            "correlation_id": getattr(intent, "correlation_id", ""),
+            "ttl_minutes": getattr(intent, "ttl_minutes", 0),
+            "payload": dict(getattr(intent, "payload", {}) or {}),
+            "created_at_utc": getattr(intent, "created_at_utc", ""),
+            "history": list(getattr(intent, "history", []) or []),
+            "reason": getattr(intent, "reason", None),
+            "broker_request_id": getattr(intent, "broker_request_id", None),
+        }
 
     def close(self) -> None:
         self.connection.close()
