@@ -50,6 +50,41 @@ class PipelineRunner:
         self.execution_audit_builder = execution_audit_builder
         self.retry_policy = retry_policy
 
+    def readiness_report(self) -> Dict[str, Any]:
+        setup_to_intent_ready = all(
+            [
+                self.setup_builder is not None,
+                self.setup_evaluator is not None,
+                self.order_intent_builder is not None,
+            ]
+        )
+        full_execution_wired = all(
+            [
+                self.execution_payload_builder is not None,
+                self.order_executor is not None,
+                self.execution_result_handler is not None,
+                self.intent_state_manager is not None,
+                self.execution_audit_builder is not None,
+                self.retry_policy is not None,
+            ]
+        )
+        return {
+            "pipeline_runner_ready": True,
+            "setup_to_intent_ready": setup_to_intent_ready,
+            "full_execution_wired": full_execution_wired,
+            "component_summary": {
+                "setup_builder": type(self.setup_builder).__name__ if self.setup_builder is not None else None,
+                "setup_evaluator": type(self.setup_evaluator).__name__ if self.setup_evaluator is not None else None,
+                "order_intent_builder": type(self.order_intent_builder).__name__ if self.order_intent_builder is not None else None,
+                "execution_payload_builder": type(self.execution_payload_builder).__name__ if self.execution_payload_builder is not None else None,
+                "order_executor": type(self.order_executor).__name__ if self.order_executor is not None else None,
+                "execution_result_handler": type(self.execution_result_handler).__name__ if self.execution_result_handler is not None else None,
+                "intent_state_manager": type(self.intent_state_manager).__name__ if self.intent_state_manager is not None else None,
+                "execution_audit_builder": type(self.execution_audit_builder).__name__ if self.execution_audit_builder is not None else None,
+                "retry_policy": type(self.retry_policy).__name__ if self.retry_policy is not None else None,
+            },
+        }
+
     def run_setup_to_intent(
         self,
         *,
@@ -109,11 +144,17 @@ class PipelineRunner:
             portfolio_result=evaluation_inputs["portfolio_result"],
             grade=grade,
             daily_loss_pct=float(evaluation_inputs.get("daily_loss_pct", 0.0)),
-            daily_loss_limit_pct=float(evaluation_inputs.get("daily_loss_limit_pct", risk_cfg.get("daily_loss_limit_pct", 2.0))),
+            daily_loss_limit_pct=float(
+                evaluation_inputs.get("daily_loss_limit_pct", risk_cfg.get("daily_loss_limit_pct", 2.0))
+            ),
             open_risk_pct=float(evaluation_inputs.get("open_risk_pct", 0.0)),
-            max_open_risk_pct=float(evaluation_inputs.get("max_open_risk_pct", risk_cfg.get("max_open_risk_pct", 2.0))),
+            max_open_risk_pct=float(
+                evaluation_inputs.get("max_open_risk_pct", risk_cfg.get("max_open_risk_pct", 2.0))
+            ),
             concurrent_trades=int(evaluation_inputs.get("concurrent_trades", 0)),
-            max_concurrent_trades=int(evaluation_inputs.get("max_concurrent_trades", risk_cfg.get("max_concurrent_trades", 3))),
+            max_concurrent_trades=int(
+                evaluation_inputs.get("max_concurrent_trades", risk_cfg.get("max_concurrent_trades", 3))
+            ),
             kill_switch_active=bool(evaluation_inputs.get("kill_switch_active", False)),
             cooldown_active=bool(evaluation_inputs.get("cooldown_active", False)),
             news_lock_active=bool(evaluation_inputs.get("news_lock_active", False)),
@@ -160,6 +201,101 @@ class PipelineRunner:
             },
         )
 
+    def run_intent_to_execution(
+        self,
+        *,
+        intent: Any,
+        execution_request: Dict[str, Any],
+        base_result: PipelineRunResult | None = None,
+    ) -> PipelineRunResult:
+        result = base_result or PipelineRunResult(
+            stage="intent_ready",
+            allowed=True,
+            setup_result=None,
+            evaluation_result=None,
+            intent_result=None,
+            details={},
+        )
+
+        if self.execution_payload_builder is None or self.order_executor is None:
+            result.stage = "payload_blocked"
+            result.allowed = False
+            result.details.setdefault("reasons", []).append("execution_stack_not_wired")
+            return result
+
+        execution_payload_result = self.execution_payload_builder.build(intent=intent, **execution_request)
+        result.execution_payload_result = execution_payload_result
+
+        if not getattr(execution_payload_result, "allowed", False):
+            result.stage = "payload_blocked"
+            result.allowed = False
+            result.details.setdefault("reasons", []).extend(list(getattr(execution_payload_result, "reasons", [])))
+            return result
+
+        execution_payload = getattr(execution_payload_result, "execution_payload", None)
+        execution_result = self.order_executor.submit(execution_payload=execution_payload)
+        result.execution_result = execution_result
+
+        handled_result = None
+        if self.execution_result_handler is not None and hasattr(self.execution_result_handler, "handle"):
+            handled_result = self.execution_result_handler.handle(result=execution_result)
+            result.handled_result = handled_result
+
+        transition_result = None
+        if (
+            handled_result is not None
+            and self.intent_state_manager is not None
+            and hasattr(self.intent_state_manager, "transition_from_execution")
+        ):
+            transition_result = self.intent_state_manager.transition_from_execution(
+                intent=intent,
+                handled_result=handled_result,
+            )
+            result.transition_result = transition_result
+
+        retry_decision = None
+        if (
+            handled_result is not None
+            and transition_result is not None
+            and self.retry_policy is not None
+            and hasattr(self.retry_policy, "decide")
+        ):
+            attempt_number = int(execution_request.get("attempt_number", 1))
+            retry_decision = self.retry_policy.decide(
+                handled_result=handled_result,
+                transition=transition_result,
+                attempt_number=attempt_number,
+            )
+            result.retry_decision = retry_decision
+
+        audit_result = None
+        if (
+            handled_result is not None
+            and transition_result is not None
+            and self.execution_audit_builder is not None
+            and hasattr(self.execution_audit_builder, "build")
+        ):
+            audit_result = self.execution_audit_builder.build(
+                intent=intent,
+                handled_result=handled_result,
+                transition=transition_result,
+            )
+            result.audit_record = audit_result
+
+        result.stage = "execution_complete"
+        result.allowed = bool(getattr(execution_result, "submitted", False))
+        result.details.update(
+            {
+                "execution_submitted": bool(getattr(execution_result, "submitted", False)),
+                "execution_status": getattr(execution_result, "status", "unknown"),
+                "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
+                "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
+                "retry_scheduled": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else False,
+                "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
+            }
+        )
+        return result
+
     def run_full(
         self,
         *,
@@ -204,78 +340,11 @@ class PipelineRunner:
         if not base_result.allowed or base_result.intent_result is None or base_result.intent_result.intent is None:
             return base_result
 
-        if execution_request is None or self.execution_payload_builder is None:
+        if execution_request is None:
             return base_result
 
-        intent = base_result.intent_result.intent
-        execution_payload_result = self.execution_payload_builder.build(intent=intent, **execution_request)
-        base_result.execution_payload_result = execution_payload_result
-
-        if not getattr(execution_payload_result, "allowed", False) or self.order_executor is None:
-            base_result.stage = "payload_blocked"
-            base_result.allowed = False
-            return base_result
-
-        execution_payload = getattr(execution_payload_result, "execution_payload", None)
-        execution_result = self.order_executor.submit(execution_payload=execution_payload)
-        base_result.execution_result = execution_result
-
-        handled_result = None
-        if self.execution_result_handler is not None and hasattr(self.execution_result_handler, "handle"):
-            handled_result = self.execution_result_handler.handle(result=execution_result)
-            base_result.handled_result = handled_result
-
-        transition_result = None
-        if (
-            handled_result is not None
-            and self.intent_state_manager is not None
-            and hasattr(self.intent_state_manager, "transition_from_execution")
-        ):
-            transition_result = self.intent_state_manager.transition_from_execution(
-                intent=intent,
-                handled_result=handled_result,
-            )
-            base_result.transition_result = transition_result
-
-        retry_decision = None
-        if (
-            handled_result is not None
-            and transition_result is not None
-            and self.retry_policy is not None
-            and hasattr(self.retry_policy, "decide")
-        ):
-            attempt_number = int(execution_request.get("attempt_number", 1))
-            retry_decision = self.retry_policy.decide(
-                handled_result=handled_result,
-                transition=transition_result,
-                attempt_number=attempt_number,
-            )
-            base_result.retry_decision = retry_decision
-
-        audit_result = None
-        if (
-            handled_result is not None
-            and transition_result is not None
-            and self.execution_audit_builder is not None
-            and hasattr(self.execution_audit_builder, "build")
-        ):
-            audit_result = self.execution_audit_builder.build(
-                intent=intent,
-                handled_result=handled_result,
-                transition=transition_result,
-            )
-            base_result.audit_record = audit_result
-
-        base_result.stage = "execution_complete"
-        base_result.allowed = bool(getattr(execution_result, "submitted", False))
-        base_result.details.update(
-            {
-                "execution_submitted": bool(getattr(execution_result, "submitted", False)),
-                "execution_status": getattr(execution_result, "status", "unknown"),
-                "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
-                "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
-                "retry_scheduled": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else False,
-                "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
-            }
+        return self.run_intent_to_execution(
+            intent=base_result.intent_result.intent,
+            execution_request=execution_request,
+            base_result=base_result,
         )
-        return base_result
