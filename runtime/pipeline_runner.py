@@ -223,7 +223,10 @@ class PipelineRunner:
             result.details.setdefault("reasons", []).append("execution_stack_not_wired")
             return result
 
-        execution_payload_result = self.execution_payload_builder.build(intent=intent, **execution_request)
+        attempt_number = int(execution_request.get("attempt_number", 1))
+        payload_request = {key: value for key, value in execution_request.items() if key != "attempt_number"}
+
+        execution_payload_result = self.execution_payload_builder.build(intent=intent, **payload_request)
         result.execution_payload_result = execution_payload_result
 
         if not getattr(execution_payload_result, "allowed", False):
@@ -264,7 +267,6 @@ class PipelineRunner:
             and self.retry_policy is not None
             and hasattr(self.retry_policy, "decide")
         ):
-            attempt_number = int(execution_request.get("attempt_number", 1))
             retry_decision = self.retry_policy.decide(
                 handled_result=handled_result,
                 transition=transition_result,

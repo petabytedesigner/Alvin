@@ -245,16 +245,11 @@ def cmd_pipeline_selftest() -> None:
     transition_result = None
     retry_decision = None
     audit_result = None
+    execution_run = None
+    intent = None
 
     if setup_to_intent.allowed and setup_to_intent.intent_result and setup_to_intent.intent_result.intent is not None:
         intent = setup_to_intent.intent_result.intent
-
-        payload_result = components.execution_payload_builder.build(
-            intent=intent,
-            units=1000,
-            order_type="market",
-            time_in_force="FOK",
-        )
 
         synthetic_execution = OrderExecutionResult(
             submitted=False,
@@ -265,21 +260,31 @@ def cmd_pipeline_selftest() -> None:
             details={"source": "pipeline_selftest"},
         )
 
-        handled_result = components.execution_result_handler.handle(synthetic_execution)
-        transition_result = components.intent_state_manager.transition_from_execution(
-            intent=intent,
-            handled_result=handled_result,
-        )
-        retry_decision = components.retry_policy.decide(
-            handled_result=handled_result,
-            transition=transition_result,
-            attempt_number=1,
-        )
-        audit_result = components.execution_audit_builder.build(
-            intent=intent,
-            handled_result=handled_result,
-            transition=transition_result,
-        )
+        original_submit = components.order_executor.submit
+
+        def _synthetic_submit(execution_payload, timeout=15):
+            return synthetic_execution
+
+        components.order_executor.submit = _synthetic_submit
+        try:
+            execution_run = runner.run_intent_to_execution(
+                intent=intent,
+                execution_request={
+                    "units": 1000,
+                    "order_type": "market",
+                    "time_in_force": "FOK",
+                    "attempt_number": 1,
+                },
+                base_result=setup_to_intent,
+            )
+        finally:
+            components.order_executor.submit = original_submit
+
+        payload_result = execution_run.execution_payload_result
+        handled_result = execution_run.handled_result
+        transition_result = execution_run.transition_result
+        retry_decision = execution_run.retry_decision
+        audit_result = execution_run.audit_record
 
     report = {
         "config_loaded": True,
@@ -293,9 +298,13 @@ def cmd_pipeline_selftest() -> None:
                 and setup_to_intent.intent_result.intent is not None
             ),
             "payload_allowed": bool(getattr(payload_result, "allowed", False)) if payload_result is not None else None,
+            "execution_stage": getattr(execution_run, "stage", None) if execution_run is not None else None,
+            "execution_allowed": bool(getattr(execution_run, "allowed", False)) if execution_run is not None else None,
             "handled_state": getattr(handled_result, "state", None) if handled_result is not None else None,
             "transition_allowed": bool(getattr(transition_result, "allowed", False)) if transition_result is not None else None,
             "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
+            "intent_state": getattr(intent, "state", None) if intent is not None else None,
+            "intent_history": list(getattr(intent, "history", [])) if intent is not None and hasattr(intent, "history") else None,
             "retry_should_retry": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else None,
             "retry_reason": getattr(retry_decision, "reason", None) if retry_decision is not None else None,
             "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
