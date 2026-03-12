@@ -248,8 +248,19 @@ def cmd_pipeline_selftest() -> None:
     execution_run = None
     intent = None
 
+    persisted = {
+        "order_intent_saved": False,
+        "order_intent_updated": False,
+        "execution_result_saved": False,
+        "transition_saved": False,
+        "audit_saved": False,
+        "retry_saved": False,
+    }
+
     if setup_to_intent.allowed and setup_to_intent.intent_result and setup_to_intent.intent_result.intent is not None:
         intent = setup_to_intent.intent_result.intent
+        db.insert_order_intent(intent)
+        persisted["order_intent_saved"] = True
 
         synthetic_execution = OrderExecutionResult(
             submitted=False,
@@ -286,6 +297,42 @@ def cmd_pipeline_selftest() -> None:
         retry_decision = execution_run.retry_decision
         audit_result = execution_run.audit_record
 
+        db.insert_order_intent(intent)
+        persisted["order_intent_updated"] = True
+
+        ts_utc = utc_now_iso()
+
+        if execution_run.execution_result is not None:
+            db.insert_execution_result(
+                intent_id=intent.intent_id,
+                result=execution_run.execution_result,
+                ts_utc=ts_utc,
+            )
+            persisted["execution_result_saved"] = True
+
+        if transition_result is not None:
+            db.insert_intent_state_transition(
+                intent_id=intent.intent_id,
+                transition=transition_result,
+                ts_utc=ts_utc,
+            )
+            persisted["transition_saved"] = True
+
+        if audit_result is not None and getattr(audit_result, "allowed", False) and getattr(audit_result, "record", None) is not None:
+            db.insert_execution_audit(
+                record=audit_result.record,
+                ts_utc=ts_utc,
+            )
+            persisted["audit_saved"] = True
+
+        if retry_decision is not None:
+            db.insert_retry_decision(
+                intent_id=intent.intent_id,
+                decision=retry_decision,
+                ts_utc=ts_utc,
+            )
+            persisted["retry_saved"] = True
+
     report = {
         "config_loaded": True,
         "db_ready": True,
@@ -308,6 +355,7 @@ def cmd_pipeline_selftest() -> None:
             "retry_should_retry": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else None,
             "retry_reason": getattr(retry_decision, "reason", None) if retry_decision is not None else None,
             "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
+            "persistence": persisted,
         },
     }
 
