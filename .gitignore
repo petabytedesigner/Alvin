@@ -1,13 +1,18 @@
-.env
-logs/
-runtime/
-*.db
-*.sqlite
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
 
-test_oanda.py
+# Virtual environments
+.venv/
+venv/
+env/
 
+# Local environment overrides
+.env
 
-!runtime/
-!runtime/*.py
+# Local runtime database artifacts
+runtime/*.sqlite
+runtime/*.sqlite.bak_*
+runtime/*.sqlite-journal
+runtime/*.sqlite-shm
+runtime/*.sqlite-wal
