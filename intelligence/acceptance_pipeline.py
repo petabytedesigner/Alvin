@@ -58,9 +58,16 @@ class AcceptancePipeline:
         portfolio_allowed, portfolio_score, portfolio_reasons = self._extract_portfolio(portfolio_result)
         risk_allowed, risk_pct, risk_reasons = self._extract_risk(risk_result)
 
+        regime_allowed, regime_penalty, regime_reasons = self._evaluate_regime(
+            regime_name=regime_name,
+            regime_confidence=regime_confidence,
+        )
+
         details["regime"] = {
             "name": regime_name,
             "confidence": regime_confidence,
+            "allowed": regime_allowed,
+            "penalty": regime_penalty,
         }
         details["execution"] = {
             "allowed": execution_allowed,
@@ -78,15 +85,8 @@ class AcceptancePipeline:
 
         if not score_allowed:
             reasons.append("score_blocked")
-        if regime_name == "post_news_disorder":
-            reasons.append("regime_post_news_disorder")
-        elif regime_name == "mixed":
-            reasons.append("regime_mixed")
-        elif regime_name == "compression":
-            reasons.append("regime_compression")
-        elif regime_name in {"trend", "expansion_trend", "range"}:
-            reasons.append(f"regime_{regime_name}")
 
+        reasons.extend(regime_reasons)
         reasons.extend(execution_reasons)
         reasons.extend(portfolio_reasons)
         reasons.extend(risk_reasons)
@@ -94,7 +94,7 @@ class AcceptancePipeline:
         if explainability_reasons:
             reasons.extend([str(x) for x in explainability_reasons if str(x).strip()])
 
-        allowed = all([score_allowed, execution_allowed, portfolio_allowed, risk_allowed])
+        allowed = all([score_allowed, regime_allowed, execution_allowed, portfolio_allowed, risk_allowed])
         state = "accepted" if allowed else "rejected"
         conviction = self._compute_conviction(
             allowed=allowed,
@@ -103,6 +103,7 @@ class AcceptancePipeline:
             execution_score=execution_score,
             portfolio_score=portfolio_score,
             risk_pct=risk_pct,
+            regime_penalty=regime_penalty,
         )
 
         reasons = self._dedupe_keep_order(reasons)
@@ -144,6 +145,39 @@ class AcceptancePipeline:
         reasons = [str(x) for x in getattr(risk_result, "reasons", [])]
         return allowed, risk_pct, reasons
 
+    def _evaluate_regime(self, *, regime_name: str, regime_confidence: float) -> Tuple[bool, float, List[str]]:
+        reasons: List[str] = []
+
+        if regime_name == "post_news_disorder":
+            reasons.append("regime_post_news_disorder")
+            reasons.append("regime_blocked")
+            return False, 0.35, reasons
+
+        if regime_name == "mixed":
+            reasons.append("regime_mixed")
+            reasons.append("regime_blocked")
+            return False, 0.25, reasons
+
+        if regime_name == "compression":
+            reasons.append("regime_compression")
+            reasons.append("regime_blocked")
+            return False, 0.20, reasons
+
+        if regime_name in {"trend", "expansion_trend"}:
+            reasons.append(f"regime_{regime_name}")
+            return True, 0.0, reasons
+
+        if regime_name == "range":
+            reasons.append("regime_range")
+            return True, 0.05, reasons
+
+        if regime_name == "unknown":
+            reasons.append("regime_unknown")
+            return True, 0.10, reasons
+
+        reasons.append(f"regime_{regime_name}")
+        return True, 0.05 if regime_confidence < 0.60 else 0.0, reasons
+
     def _normalize_score(self, score_value: float) -> float:
         return round(max(0.0, min(1.0, float(score_value) / 100.0)), 4)
 
@@ -156,6 +190,7 @@ class AcceptancePipeline:
         execution_score: float,
         portfolio_score: float,
         risk_pct: float,
+        regime_penalty: float,
     ) -> str:
         if not allowed:
             return "blocked"
@@ -166,6 +201,7 @@ class AcceptancePipeline:
             + (execution_score * 0.25)
             + ((1.0 - min(1.0, portfolio_score)) * 0.10)
             + (min(1.0, risk_pct / 1.5) * 0.10)
+            - regime_penalty
         )
 
         if composite >= 0.85:
