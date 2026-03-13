@@ -240,6 +240,9 @@ def cmd_pipeline_selftest() -> None:
         intent_notes={"mode": "selftest"},
     )
 
+    setup_stage = setup_to_intent.stage
+    setup_allowed = setup_to_intent.allowed
+
     payload_result = None
     handled_result = None
     transition_result = None
@@ -338,8 +341,8 @@ def cmd_pipeline_selftest() -> None:
         "db_ready": True,
         **runner.readiness_report(),
         "selftest": {
-            "setup_to_intent_stage": setup_to_intent.stage,
-            "setup_to_intent_allowed": setup_to_intent.allowed,
+            "setup_stage": setup_stage,
+            "setup_allowed": setup_allowed,
             "intent_created": bool(
                 setup_to_intent.intent_result is not None
                 and setup_to_intent.intent_result.intent is not None
