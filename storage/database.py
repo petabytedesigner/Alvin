@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 
+class RuntimeSchemaCompatibilityError(RuntimeError):
+    pass
+
+
 class Database:
     def __init__(self, db_path: str) -> None:
         self.db_path = Path(db_path)
@@ -18,6 +22,7 @@ class Database:
         schema = Path(schema_path).read_text(encoding="utf-8")
         self.connection.executescript(schema)
         self.connection.commit()
+        self._verify_runtime_schema()
 
     def insert_event(self, *args: Any, **kwargs: Any) -> None:
         if len(args) == 1 and isinstance(args[0], dict):
@@ -254,6 +259,73 @@ class Database:
             "reason": getattr(intent, "reason", None),
             "broker_request_id": getattr(intent, "broker_request_id", None),
         }
+
+    def _verify_runtime_schema(self) -> None:
+        required_columns = {
+            "order_intents": {
+                "intent_id",
+                "dedupe_key",
+                "instrument",
+                "state",
+                "side",
+                "payload_json",
+                "created_at_utc",
+            },
+            "execution_results": {
+                "intent_id",
+                "status",
+                "submitted",
+                "broker_http_status",
+                "broker_order_id",
+                "reasons_json",
+                "details_json",
+                "ts_utc",
+            },
+            "intent_state_transitions": {
+                "intent_id",
+                "previous_state",
+                "next_state",
+                "allowed",
+                "reasons_json",
+                "details_json",
+                "ts_utc",
+            },
+            "execution_audits": {
+                "intent_id",
+                "correlation_id",
+                "instrument",
+                "side",
+                "previous_state",
+                "next_state",
+                "execution_category",
+                "accepted",
+                "payload_json",
+                "ts_utc",
+            },
+            "retry_decisions": {
+                "intent_id",
+                "should_retry",
+                "retry_after_seconds",
+                "max_attempts",
+                "reason",
+                "details_json",
+                "ts_utc",
+            },
+        }
+
+        for table_name, expected_columns in required_columns.items():
+            actual_columns = self._table_columns(table_name)
+            missing_columns = sorted(expected_columns - actual_columns)
+            if missing_columns:
+                missing_render = ", ".join(missing_columns)
+                raise RuntimeSchemaCompatibilityError(
+                    f"Database schema at '{self.db_path}' is out of date for table '{table_name}'. "
+                    f"Missing columns: {missing_render}. Back up or remove the local SQLite database and run bootstrap again."
+                )
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        rows = self.connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row["name"]) for row in rows}
 
     def close(self) -> None:
         self.connection.close()
