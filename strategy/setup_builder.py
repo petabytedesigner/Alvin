@@ -42,10 +42,12 @@ class StrategySetupBuilder:
         grade: str = "B",
         session: str = "unknown",
         post_news: bool = False,
+        regime: str = "unknown",
         metadata: Dict[str, Any] | None = None,
     ) -> SetupBuildResult:
         reasons: list[str] = []
         bounded_score_hint = round(max(0.0, min(100.0, float(score_hint))), 2)
+        normalized_regime = str(regime or "unknown").strip() or "unknown"
         details: Dict[str, Any] = {
             "instrument": instrument,
             "timeframe": timeframe,
@@ -54,6 +56,7 @@ class StrategySetupBuilder:
             "atr_value": atr_value,
             "score_hint": bounded_score_hint,
             "score_hint_normalized": round(bounded_score_hint / 100.0, 4),
+            "regime": normalized_regime,
             "level_id": level.level_id,
             "level_kind": level.kind,
             "level_price": level.price,
@@ -99,7 +102,7 @@ class StrategySetupBuilder:
             side=side,
             score=bounded_score_hint,
             grade=grade,
-            regime="unknown",
+            regime=normalized_regime,
             trigger_reference=trigger_ref,
             level_reference=level.level_id,
             setup_type=setup_type,
