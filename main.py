@@ -75,6 +75,7 @@ def cmd_doctor() -> None:
     broker_connectivity_required = _feature_enabled(config, "broker_connectivity_required", True)
     doctor_checks_broker = _feature_enabled(config, "doctor_checks_broker", False)
     should_check_broker = broker_connectivity_required or doctor_checks_broker
+    broker_env_configured = broker.is_configured() if should_check_broker else None
 
     checks = {
         "config_loaded": True,
@@ -82,8 +83,16 @@ def cmd_doctor() -> None:
         "runtime_components_ready": True,
         "pipeline_runner_ready": True,
         "broker_connectivity_required": broker_connectivity_required,
-        "oanda_env_configured": broker.is_configured() if should_check_broker else None,
         "broker_check_skipped": not should_check_broker,
+        "broker_env_configured": broker_env_configured,
+        "doctor_scope": "config_env_wiring",
+        "doctor_semantics": {
+            "broker_check_kind": "env_presence_only" if should_check_broker else "skipped",
+            "broker_live_connectivity_checked": False,
+            "broker_auth_verified": False,
+            "market_data_path_checked": False,
+            "execution_submission_checked": False,
+        },
         "config_driven_components": {
             "level_detector": type(components.level_detector).__name__,
             "break_retest_validator": type(components.break_retest_validator).__name__,
@@ -114,6 +123,13 @@ def cmd_pipeline_smoke() -> None:
         "db_ready": True,
         **runner.readiness_report(),
         "oanda_env_configured": broker.is_configured(),
+        "smoke_scope": "pipeline_wiring",
+        "smoke_semantics": {
+            "market_data_checked": False,
+            "scanner_checked": False,
+            "broker_submission_checked": False,
+            "live_trading_ready_proof": False,
+        },
     }
 
     if journal is not None:
