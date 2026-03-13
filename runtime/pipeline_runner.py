@@ -106,6 +106,9 @@ class PipelineRunner:
         correlation_id: str | None = None,
         intent_notes: Dict[str, Any] | None = None,
     ) -> PipelineRunResult:
+        regime_assessment = evaluation_inputs["regime_assessment"]
+        regime_name = str(getattr(regime_assessment, "regime", "unknown") or "unknown")
+
         setup_result = self.setup_builder.build(
             instrument=instrument,
             timeframe=timeframe,
@@ -119,6 +122,7 @@ class PipelineRunner:
             grade=grade,
             session=session,
             post_news=post_news,
+            regime=regime_name,
             metadata=metadata,
         )
         if not setup_result.allowed or setup_result.candidate is None:
@@ -139,7 +143,7 @@ class PipelineRunner:
             setup_result=setup_result,
             score_allowed=bool(evaluation_inputs.get("score_allowed", True)),
             score_value=float(evaluation_inputs.get("score_value", candidate.score)),
-            regime_assessment=evaluation_inputs["regime_assessment"],
+            regime_assessment=regime_assessment,
             execution_result=evaluation_inputs["execution_result"],
             portfolio_result=evaluation_inputs["portfolio_result"],
             grade=grade,
@@ -198,6 +202,7 @@ class PipelineRunner:
                 "candidate_id": candidate.candidate_id,
                 "intent_id": intent_result.intent.intent_id,
                 "minimum_trade_score": minimum_trade_score,
+                "regime": regime_name,
             },
         )
 
