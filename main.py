@@ -242,6 +242,10 @@ def cmd_pipeline_selftest() -> None:
 
     setup_stage = setup_to_intent.stage
     setup_allowed = setup_to_intent.allowed
+    candidate_regime = None
+
+    if setup_to_intent.setup_result is not None and setup_to_intent.setup_result.candidate is not None:
+        candidate_regime = getattr(setup_to_intent.setup_result.candidate, "regime", None)
 
     payload_result = None
     handled_result = None
@@ -343,6 +347,7 @@ def cmd_pipeline_selftest() -> None:
         "selftest": {
             "setup_stage": setup_stage,
             "setup_allowed": setup_allowed,
+            "candidate_regime": candidate_regime,
             "intent_created": bool(
                 setup_to_intent.intent_result is not None
                 and setup_to_intent.intent_result.intent is not None
