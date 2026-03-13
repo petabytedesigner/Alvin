@@ -235,6 +235,9 @@ class PipelineRunner:
             result.details.setdefault("reasons", []).extend(list(getattr(execution_payload_result, "reasons", [])))
             return result
 
+        if getattr(intent, "state", None) == "intent_created" and hasattr(intent, "transition"):
+            intent.transition("submit_started", reason="submit_started")
+
         execution_payload = getattr(execution_payload_result, "execution_payload", None)
         execution_result = self.order_executor.submit(execution_payload=execution_payload)
         result.execution_result = execution_result
