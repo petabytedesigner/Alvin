@@ -16,5 +16,10 @@
     "NAS100_USD",
     "SPX500_USD",
     "US30_USD"
+  ],
+  "scan_default_instrument": "EUR_USD",
+  "scan_timeframes": [
+    "H1",
+    "M15"
   ]
 }

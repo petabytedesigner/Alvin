@@ -1,0 +1,6 @@
+{
+  "default_h1_count": 200,
+  "default_m15_count": 200,
+  "request_timeout_seconds": 15,
+  "price_component": "M"
+}

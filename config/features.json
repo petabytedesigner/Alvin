@@ -2,5 +2,7 @@
   "broker_connectivity_required": true,
   "journal_enabled": true,
   "bootstrap_writes_snapshot": true,
-  "doctor_checks_broker": false
+  "doctor_checks_broker": false,
+  "scan_once_enabled": true,
+  "market_data_cache_enabled": true
 }

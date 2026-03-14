@@ -1,0 +1,6 @@
+{
+  "default_instrument": "EUR_USD",
+  "default_session": "london",
+  "allow_post_news_scan": true,
+  "scan_once_timeout_seconds": 30
+}

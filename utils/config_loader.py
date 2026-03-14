@@ -14,6 +14,8 @@ CONFIG_FILES = [
     "strategy.json",
     "regime.json",
     "execution.json",
+    "market_data.json",
+    "scanner.json",
 ]
 
 
@@ -38,7 +40,18 @@ def load_all_configs(config_dir: str = "config") -> Dict[str, Any]:
 
 
 def _validate_configs(config: Dict[str, Any]) -> None:
-    for section in ("global", "features", "risk", "scoring", "instruments", "strategy", "regime", "execution"):
+    for section in (
+        "global",
+        "features",
+        "risk",
+        "scoring",
+        "instruments",
+        "strategy",
+        "regime",
+        "execution",
+        "market_data",
+        "scanner",
+    ):
         if section not in config:
             raise ConfigValidationError(f"Missing config section: {section}")
         if not isinstance(config[section], dict):
@@ -52,6 +65,8 @@ def _validate_configs(config: Dict[str, Any]) -> None:
     _validate_strategy(config["strategy"])
     _validate_regime(config["regime"])
     _validate_execution(config["execution"])
+    _validate_market_data(config["market_data"])
+    _validate_scanner(config["scanner"])
 
 
 def _require_keys(section_name: str, data: Dict[str, Any], keys: list[str]) -> None:
@@ -89,6 +104,8 @@ def _validate_features(data: Dict[str, Any]) -> None:
             "journal_enabled",
             "bootstrap_writes_snapshot",
             "doctor_checks_broker",
+            "scan_once_enabled",
+            "market_data_cache_enabled",
         ],
     )
     for key, value in data.items():
@@ -206,6 +223,16 @@ def _validate_instruments(data: Dict[str, Any]) -> None:
     if len(set(all_symbols)) != len(all_symbols):
         raise ConfigValidationError("instruments contains duplicate symbols across groups")
 
+    if "scan_default_instrument" in data:
+        value = data["scan_default_instrument"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigValidationError("instruments.scan_default_instrument must be a non-empty string")
+
+    if "scan_timeframes" in data:
+        value = data["scan_timeframes"]
+        if not isinstance(value, list) or not value:
+            raise ConfigValidationError("instruments.scan_timeframes must be a non-empty list")
+
 
 def _validate_strategy(data: Dict[str, Any]) -> None:
     _require_keys("strategy", data, ["level_detection", "break_retest"])
@@ -263,6 +290,11 @@ def _validate_strategy(data: Dict[str, Any]) -> None:
 
     if break_retest["max_retest_bars"] < break_retest["min_retest_bars"]:
         raise ConfigValidationError("strategy.break_retest.max_retest_bars must be >= min_retest_bars")
+
+    if "atr_period" in data:
+        value = data["atr_period"]
+        if not isinstance(value, int) or value < 2:
+            raise ConfigValidationError("strategy.atr_period must be an integer >= 2")
 
 
 def _validate_regime(data: Dict[str, Any]) -> None:
@@ -339,3 +371,33 @@ def _validate_execution(data: Dict[str, Any]) -> None:
 
     if not (bands["clean"] >= bands["acceptable"] >= bands["fragile"] >= data["score_floor"]):
         raise ConfigValidationError("execution quality bands must descend clean >= acceptable >= fragile >= score_floor")
+
+
+def _validate_market_data(data: Dict[str, Any]) -> None:
+    _require_keys(
+        "market_data",
+        data,
+        ["default_h1_count", "default_m15_count", "request_timeout_seconds", "price_component"],
+    )
+    for key in ("default_h1_count", "default_m15_count", "request_timeout_seconds"):
+        value = data[key]
+        if not isinstance(value, int) or value < 1:
+            raise ConfigValidationError(f"market_data.{key} must be an integer >= 1")
+    if not isinstance(data["price_component"], str) or not data["price_component"].strip():
+        raise ConfigValidationError("market_data.price_component must be a non-empty string")
+
+
+def _validate_scanner(data: Dict[str, Any]) -> None:
+    _require_keys(
+        "scanner",
+        data,
+        ["default_instrument", "default_session", "allow_post_news_scan", "scan_once_timeout_seconds"],
+    )
+    if not isinstance(data["default_instrument"], str) or not data["default_instrument"].strip():
+        raise ConfigValidationError("scanner.default_instrument must be a non-empty string")
+    if not isinstance(data["default_session"], str) or not data["default_session"].strip():
+        raise ConfigValidationError("scanner.default_session must be a non-empty string")
+    if not isinstance(data["allow_post_news_scan"], bool):
+        raise ConfigValidationError("scanner.allow_post_news_scan must be boolean")
+    if not isinstance(data["scan_once_timeout_seconds"], int) or data["scan_once_timeout_seconds"] < 1:
+        raise ConfigValidationError("scanner.scan_once_timeout_seconds must be an integer >= 1")

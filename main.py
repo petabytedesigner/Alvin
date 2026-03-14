@@ -12,6 +12,7 @@ from intelligence.execution_quality import ExecutionQualityResult
 from intelligence.regime_classifier import RegimeAssessment
 from monitoring.journal import Journal
 from runtime.component_factory import build_alvin_components
+from runtime.scan_models import ScanRequest
 from storage.database import Database
 from strategy.break_retest_validator import BreakAssessment, BreakRetestResult, RetestAssessment
 from strategy.level_detection import Level
@@ -82,6 +83,7 @@ def cmd_doctor() -> None:
         "db_ready": True,
         "runtime_components_ready": True,
         "pipeline_runner_ready": True,
+        "scanner_ready": getattr(components, "scanner", None) is not None,
         "broker_connectivity_required": broker_connectivity_required,
         "broker_check_skipped": not should_check_broker,
         "broker_env_configured": broker_env_configured,
@@ -99,6 +101,7 @@ def cmd_doctor() -> None:
             "regime_classifier": type(components.regime_classifier).__name__,
             "execution_quality_assessor": type(components.execution_quality_assessor).__name__,
             "risk_gate": type(components.risk_gate).__name__,
+            "scanner": type(components.scanner).__name__ if getattr(components, "scanner", None) is not None else None,
             "pipeline_runner": type(components.pipeline_runner).__name__,
         },
     }
@@ -122,6 +125,7 @@ def cmd_pipeline_smoke() -> None:
         "config_loaded": True,
         "db_ready": True,
         **runner.readiness_report(),
+        "scanner_ready": getattr(components, "scanner", None) is not None,
         "oanda_env_configured": broker.is_configured(),
         "smoke_scope": "pipeline_wiring",
         "smoke_semantics": {
@@ -136,6 +140,51 @@ def cmd_pipeline_smoke() -> None:
         journal.info("Pipeline smoke completed", report)
 
     print(json.dumps(report, indent=2))
+    db.close()
+
+
+def cmd_scan_once(instrument: str | None = None, session: str | None = None, post_news: bool = False) -> None:
+    config = load_all_configs()
+    db = build_db(config)
+    journal = _journal_if_enabled(config, db)
+
+    if not _feature_enabled(config, "scan_once_enabled", True):
+        raise RuntimeError("scan-once is disabled by config.features.scan_once_enabled")
+
+    components = build_alvin_components(config)
+    scanner_cfg = config["scanner"]
+    market_data_cfg = config["market_data"]
+
+    resolved_instrument = (instrument or scanner_cfg.get("default_instrument") or "").strip().upper()
+    if not resolved_instrument:
+        raise RuntimeError("scan-once requires an instrument or scanner.default_instrument")
+
+    resolved_session = (session or scanner_cfg.get("default_session") or "unknown").strip().lower()
+
+    if post_news and not bool(scanner_cfg.get("allow_post_news_scan", True)):
+        raise RuntimeError("post-news scan requested but scanner.allow_post_news_scan is false")
+
+    request = ScanRequest(
+        instrument=resolved_instrument,
+        h1_count=int(market_data_cfg.get("default_h1_count", 200)),
+        m15_count=int(market_data_cfg.get("default_m15_count", 200)),
+        post_news=post_news,
+        session=resolved_session,
+    )
+    result = components.scanner.scan_once(request)
+
+    payload = {
+        "config_loaded": True,
+        "db_ready": True,
+        "scanner_ready": getattr(components, "scanner", None) is not None,
+        "request": request.to_dict(),
+        "result": result.to_dict(),
+    }
+
+    if journal is not None:
+        journal.info("Scan once completed", payload)
+
+    print(json.dumps(payload, indent=2))
     db.close()
 
 
@@ -405,6 +454,11 @@ def main() -> None:
     sub.add_parser("pipeline-smoke")
     sub.add_parser("pipeline-selftest")
 
+    scan_once_parser = sub.add_parser("scan-once")
+    scan_once_parser.add_argument("--instrument", required=False)
+    scan_once_parser.add_argument("--session", required=False)
+    scan_once_parser.add_argument("--post-news", action="store_true")
+
     args = parser.parse_args()
 
     Path("runtime").mkdir(parents=True, exist_ok=True)
@@ -420,6 +474,12 @@ def main() -> None:
         cmd_pipeline_smoke()
     elif args.command == "pipeline-selftest":
         cmd_pipeline_selftest()
+    elif args.command == "scan-once":
+        cmd_scan_once(
+            instrument=getattr(args, "instrument", None),
+            session=getattr(args, "session", None),
+            post_news=bool(getattr(args, "post_news", False)),
+        )
 
 
 if __name__ == "__main__":
