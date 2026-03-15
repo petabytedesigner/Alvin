@@ -59,7 +59,44 @@ def _scan_cli_summary(request: ScanRequest, result) -> dict:
         "evaluation_state": result_summary.get("evaluation_state"),
         "risk_pct": result_summary.get("risk_pct"),
         "execution_quality": result_summary.get("execution_quality"),
+        "intent_allowed": result_summary.get("intent_allowed"),
+        "intent_id": result_summary.get("intent_id"),
+        "intent_state": result_summary.get("intent_state"),
+        "sizing_allowed": result_summary.get("sizing_allowed"),
+        "sized_units": result_summary.get("sized_units"),
+        "stop_distance": result_summary.get("stop_distance"),
+        "payload_allowed": result_summary.get("payload_allowed"),
+        "payload_units": result_summary.get("payload_units"),
+        "payload_order_type": result_summary.get("payload_order_type"),
     }
+
+
+def _scan_cli_stage_flags(result) -> dict:
+    stage_group = result.stage_group()
+    return {
+        "market_data_fetch_attempted": True,
+        "setup_flow_attempted": stage_group in {"setup", "evaluation", "intent", "payload"},
+        "evaluation_flow_attempted": stage_group in {"evaluation", "intent", "payload"},
+        "intent_flow_attempted": stage_group in {"intent", "payload"},
+        "payload_preview_attempted": stage_group == "payload",
+        "execution_submission_attempted": False,
+    }
+
+
+def _scan_cli_focus(result) -> dict:
+    details = result.details or {}
+    focus = {
+        "reason_path": list(result.reasons),
+        "selected_level": details.get("selected_level"),
+        "break_retest": details.get("break_retest"),
+        "confirmation": details.get("confirmation"),
+        "setup": details.get("setup"),
+        "evaluation": details.get("evaluation"),
+        "intent": details.get("intent"),
+        "sizing": details.get("sizing"),
+        "payload_preview": details.get("payload_preview"),
+    }
+    return focus
 
 
 def cmd_bootstrap() -> None:
@@ -109,6 +146,7 @@ def cmd_doctor() -> None:
         "runtime_components_ready": True,
         "pipeline_runner_ready": True,
         "scanner_ready": getattr(components, "scanner", None) is not None,
+        "payload_preview_ready": getattr(components, "sized_execution_payload_builder", None) is not None,
         "broker_connectivity_required": broker_connectivity_required,
         "broker_check_skipped": not should_check_broker,
         "broker_env_configured": broker_env_configured,
@@ -118,6 +156,7 @@ def cmd_doctor() -> None:
             "broker_live_connectivity_checked": False,
             "broker_auth_verified": False,
             "market_data_path_checked": False,
+            "payload_preview_wiring_checked": getattr(components, "sized_execution_payload_builder", None) is not None,
             "execution_submission_checked": False,
         },
         "config_driven_components": {
@@ -126,7 +165,13 @@ def cmd_doctor() -> None:
             "regime_classifier": type(components.regime_classifier).__name__,
             "execution_quality_assessor": type(components.execution_quality_assessor).__name__,
             "risk_gate": type(components.risk_gate).__name__,
+            "position_sizer": type(getattr(components, "position_sizer", None)).__name__
+            if getattr(components, "position_sizer", None) is not None
+            else None,
             "scanner": type(components.scanner).__name__ if getattr(components, "scanner", None) is not None else None,
+            "sized_execution_payload_builder": type(getattr(components, "sized_execution_payload_builder", None)).__name__
+            if getattr(components, "sized_execution_payload_builder", None) is not None
+            else None,
             "pipeline_runner": type(components.pipeline_runner).__name__,
         },
     }
@@ -151,11 +196,13 @@ def cmd_pipeline_smoke() -> None:
         "db_ready": True,
         **runner.readiness_report(),
         "scanner_ready": getattr(components, "scanner", None) is not None,
+        "payload_preview_ready": getattr(components, "sized_execution_payload_builder", None) is not None,
         "oanda_env_configured": broker.is_configured(),
         "smoke_scope": "pipeline_wiring",
         "smoke_semantics": {
             "market_data_checked": False,
             "scanner_checked": False,
+            "payload_preview_checked": False,
             "broker_submission_checked": False,
             "live_trading_ready_proof": False,
         },
@@ -203,15 +250,10 @@ def cmd_scan_once(instrument: str | None = None, session: str | None = None, pos
         "db_ready": True,
         "scanner_ready": getattr(components, "scanner", None) is not None,
         "scan_scope": "scanner_cli",
-        "scan_semantics": {
-            "market_data_fetch_attempted": True,
-            "setup_flow_attempted": True,
-            "evaluation_flow_attempted": True,
-            "intent_flow_attempted": False,
-            "execution_submission_attempted": False,
-        },
+        "scan_semantics": _scan_cli_stage_flags(result),
         "request": request.to_dict(),
         "summary": _scan_cli_summary(request, result),
+        "focus": _scan_cli_focus(result),
         "result": result.to_dict(),
     }
 
