@@ -14,7 +14,7 @@ from runtime.scan_models import ScanRequest, ScanResult
 from strategy.break_retest_validator import BreakRetestResult, BreakRetestValidator
 from strategy.level_detection import Candle, Level, LevelDetector
 from strategy.m15_confirmation import ConfirmationResult, M15ConfirmationValidator
-from strategy.setup_builder import SetupBuildResult, StrategySetupBuilder
+from strategy.setup_builder import StrategySetupBuilder
 from strategy.setup_evaluator import SetupEvaluationResult, SetupEvaluator
 
 
@@ -31,6 +31,7 @@ class Scanner:
     - validate M15 confirmation
     - build setup candidate
     - evaluate setup
+    - build order intent when evaluation is approved
     """
 
     def __init__(
@@ -46,6 +47,8 @@ class Scanner:
         execution_quality_assessor: ExecutionQualityAssessor,
         setup_builder: StrategySetupBuilder,
         setup_evaluator: SetupEvaluator,
+        order_intent_builder: Any | None = None,
+        minimum_trade_score: float = 50.0,
     ) -> None:
         self.market_data = market_data
         self.atr_calculator = atr_calculator
@@ -57,6 +60,8 @@ class Scanner:
         self.execution_quality_assessor = execution_quality_assessor
         self.setup_builder = setup_builder
         self.setup_evaluator = setup_evaluator
+        self.order_intent_builder = order_intent_builder
+        self.minimum_trade_score = float(minimum_trade_score)
         self.confirmation_validator = M15ConfirmationValidator()
 
     def scan_once(self, request: ScanRequest) -> ScanResult:
@@ -252,32 +257,97 @@ class Scanner:
             session_allowed=True,
         )
 
-        return ScanResult(
-            allowed=evaluation_result.allowed,
-            stage="evaluation_ready" if evaluation_result.allowed else "evaluation_blocked",
-            reasons=list(evaluation_result.reasons),
-            details={
-                **self._base_details(
-                    instrument=instrument,
-                    request=request,
-                    atr=atr.to_dict(),
-                    levels=levels,
-                    regime=regime,
-                    h1_count=len(h1_batch.candles),
-                    m15_count=len(m15_batch.candles),
-                ),
-                "selected_level": selected_level.to_dict(),
-                "break_retest": self._serialize_break_retest(break_retest),
-                "confirmation": self._serialize_confirmation(confirmation),
-                "execution_quality": self._serialize_execution_quality(execution_quality),
-                "setup": setup_result.to_dict(),
-                "evaluation": self._serialize_evaluation(evaluation_result),
-                "cache_keys": [
-                    f"{instrument}::{Timeframe.H1}",
-                    f"{instrument}::{Timeframe.M15}",
-                ],
-            },
+        base_details = {
+            **self._base_details(
+                instrument=instrument,
+                request=request,
+                atr=atr.to_dict(),
+                levels=levels,
+                regime=regime,
+                h1_count=len(h1_batch.candles),
+                m15_count=len(m15_batch.candles),
+            ),
+            "selected_level": selected_level.to_dict(),
+            "break_retest": self._serialize_break_retest(break_retest),
+            "confirmation": self._serialize_confirmation(confirmation),
+            "execution_quality": self._serialize_execution_quality(execution_quality),
+            "setup": setup_result.to_dict(),
+            "evaluation": self._serialize_evaluation(evaluation_result),
+            "cache_keys": [
+                f"{instrument}::{Timeframe.H1}",
+                f"{instrument}::{Timeframe.M15}",
+            ],
+        }
+
+        if not evaluation_result.allowed:
+            return ScanResult(
+                allowed=False,
+                stage="evaluation_blocked",
+                reasons=list(evaluation_result.reasons),
+                details=base_details,
+            )
+
+        intent_result = self._build_intent(
+            candidate=setup_result.candidate,
+            evaluation_result=evaluation_result,
+            instrument=instrument,
+            request=request,
+            selected_level=selected_level,
         )
+        base_details["intent"] = intent_result
+
+        if not intent_result["allowed"]:
+            return ScanResult(
+                allowed=False,
+                stage="intent_blocked",
+                reasons=list(intent_result["reasons"]),
+                details=base_details,
+            )
+
+        return ScanResult(
+            allowed=True,
+            stage="intent_ready",
+            reasons=list(intent_result["reasons"]),
+            details=base_details,
+        )
+
+    def _build_intent(
+        self,
+        *,
+        candidate: Any,
+        evaluation_result: SetupEvaluationResult,
+        instrument: str,
+        request: ScanRequest,
+        selected_level: Level,
+    ) -> Dict[str, Any]:
+        if self.order_intent_builder is None:
+            return {
+                "allowed": False,
+                "reasons": ["order_intent_builder_missing"],
+                "details": {"instrument": instrument},
+                "intent": None,
+            }
+
+        build_result = self.order_intent_builder.build(
+            candidate=candidate,
+            evaluation=evaluation_result,
+            ttl_minutes=60,
+            correlation_id=f"scan-{instrument.lower()}-{selected_level.level_id}",
+            notes={
+                "source": "scan_once",
+                "session": request.session,
+                "post_news": request.post_news,
+                "selected_level_id": selected_level.level_id,
+            },
+            minimum_trade_score=self.minimum_trade_score,
+        )
+
+        return {
+            "allowed": bool(build_result.allowed),
+            "reasons": list(build_result.reasons),
+            "details": dict(build_result.details),
+            "intent": build_result.intent.to_dict() if build_result.intent is not None else None,
+        }
 
     def _base_details(
         self,

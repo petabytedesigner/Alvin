@@ -92,6 +92,8 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
         execution_quality_assessor=execution_quality_assessor,
         setup_builder=setup_builder,
         setup_evaluator=setup_evaluator,
+        order_intent_builder=order_intent_builder,
+        minimum_trade_score=float(resolved_config.get("scoring", {}).get("minimum_trade_score", 50.0)),
     )
 
     pipeline_runner = PipelineRunner(

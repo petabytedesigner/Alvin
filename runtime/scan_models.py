@@ -51,6 +51,9 @@ class ScanResult:
         evaluation_details = evaluation.get("details") or {}
         execution_quality = self.details.get("execution_quality") or {}
         break_retest = self.details.get("break_retest") or {}
+        intent = self.details.get("intent") or {}
+        intent_details = intent.get("details") or {}
+        intent_obj = intent.get("intent") or {}
 
         return {
             "status": "allowed" if self.allowed else "blocked",
@@ -75,6 +78,9 @@ class ScanResult:
             "evaluation_state": evaluation.get("state"),
             "risk_pct": evaluation_details.get("risk_pct"),
             "execution_quality": execution_quality.get("quality"),
+            "intent_allowed": intent.get("allowed"),
+            "intent_id": intent_obj.get("intent_id") or intent_details.get("intent_id"),
+            "intent_state": intent_obj.get("state"),
         }
 
     def to_dict(self) -> Dict[str, Any]:
