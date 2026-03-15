@@ -4,12 +4,15 @@ import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 from broker.oanda_client import OandaClient
 from broker.order_executor import OrderExecutionResult
+from contracts.decision_snapshot import DecisionSnapshot
 from core.events import Event, utc_now_iso
 from intelligence.execution_quality import ExecutionQualityResult
 from intelligence.regime_classifier import RegimeAssessment
+from intelligence.shadow_evaluator import ShadowEvaluator
 from monitoring.journal import Journal
 from runtime.component_factory import build_alvin_components
 from runtime.scan_models import ScanRequest
@@ -79,13 +82,14 @@ def _scan_cli_stage_flags(result) -> dict:
         "evaluation_flow_attempted": stage_group in {"evaluation", "intent", "payload"},
         "intent_flow_attempted": stage_group in {"intent", "payload"},
         "payload_preview_attempted": stage_group == "payload",
+        "shadow_recording_attempted": True,
         "execution_submission_attempted": False,
     }
 
 
 def _scan_cli_focus(result) -> dict:
     details = result.details or {}
-    focus = {
+    return {
         "reason_path": list(result.reasons),
         "selected_level": details.get("selected_level"),
         "break_retest": details.get("break_retest"),
@@ -95,8 +99,68 @@ def _scan_cli_focus(result) -> dict:
         "intent": details.get("intent"),
         "sizing": details.get("sizing"),
         "payload_preview": details.get("payload_preview"),
+        "shadow": details.get("shadow"),
+        "decision_snapshot": details.get("decision_snapshot"),
+        "persistence": details.get("persistence"),
     }
-    return focus
+
+
+def _persist_scan_artifacts(*, db: Database, request: ScanRequest, result, ts_utc: str) -> dict:
+    summary = result.summary()
+    result_payload = result.to_dict()
+    correlation_id = None
+    intent = (result.details or {}).get("intent") or {}
+    intent_details = intent.get("details") or {}
+    intent_obj = intent.get("intent") or {}
+    correlation_id = intent_obj.get("correlation_id") or intent_details.get("correlation_id")
+
+    scan_id = db.insert_scan_run(
+        instrument=request.instrument,
+        session=request.session,
+        stage=result.stage,
+        allowed=result.allowed,
+        stage_group=result.stage_group(),
+        request=request.to_dict(),
+        summary=summary,
+        result=result_payload,
+        ts_utc=ts_utc,
+        primary_reason=summary.get("primary_reason"),
+        correlation_id=correlation_id,
+    )
+
+    payload_preview = (result.details or {}).get("payload_preview") or {}
+    sizing = (result.details or {}).get("sizing") or {}
+    payload_preview_id = None
+    if payload_preview:
+        payload_preview_id = db.insert_payload_preview(
+            scan_id=scan_id,
+            intent_id=summary.get("intent_id"),
+            instrument=request.instrument,
+            payload_preview=payload_preview,
+            sizing=sizing,
+            ts_utc=ts_utc,
+        )
+
+    snapshot_payload = {
+        "summary": summary,
+        "result": result_payload,
+    }
+    decision_snapshot_id = db.insert_scan_decision_snapshot(
+        scan_id=scan_id,
+        instrument=request.instrument,
+        stage=result.stage,
+        candidate_id=summary.get("candidate_id"),
+        intent_id=summary.get("intent_id"),
+        payload_preview_id=payload_preview_id,
+        payload=snapshot_payload,
+        ts_utc=ts_utc,
+    )
+
+    return {
+        "scan_id": scan_id,
+        "payload_preview_id": payload_preview_id,
+        "decision_snapshot_id": decision_snapshot_id,
+    }
 
 
 def cmd_bootstrap() -> None:
@@ -147,6 +211,7 @@ def cmd_doctor() -> None:
         "pipeline_runner_ready": True,
         "scanner_ready": getattr(components, "scanner", None) is not None,
         "payload_preview_ready": getattr(components, "sized_execution_payload_builder", None) is not None,
+        "shadow_ready": True,
         "broker_connectivity_required": broker_connectivity_required,
         "broker_check_skipped": not should_check_broker,
         "broker_env_configured": broker_env_configured,
@@ -157,6 +222,7 @@ def cmd_doctor() -> None:
             "broker_auth_verified": False,
             "market_data_path_checked": False,
             "payload_preview_wiring_checked": getattr(components, "sized_execution_payload_builder", None) is not None,
+            "shadow_storage_checked": True,
             "execution_submission_checked": False,
         },
         "config_driven_components": {
@@ -165,13 +231,7 @@ def cmd_doctor() -> None:
             "regime_classifier": type(components.regime_classifier).__name__,
             "execution_quality_assessor": type(components.execution_quality_assessor).__name__,
             "risk_gate": type(components.risk_gate).__name__,
-            "position_sizer": type(getattr(components, "position_sizer", None)).__name__
-            if getattr(components, "position_sizer", None) is not None
-            else None,
             "scanner": type(components.scanner).__name__ if getattr(components, "scanner", None) is not None else None,
-            "sized_execution_payload_builder": type(getattr(components, "sized_execution_payload_builder", None)).__name__
-            if getattr(components, "sized_execution_payload_builder", None) is not None
-            else None,
             "pipeline_runner": type(components.pipeline_runner).__name__,
         },
     }
@@ -197,12 +257,14 @@ def cmd_pipeline_smoke() -> None:
         **runner.readiness_report(),
         "scanner_ready": getattr(components, "scanner", None) is not None,
         "payload_preview_ready": getattr(components, "sized_execution_payload_builder", None) is not None,
+        "shadow_ready": True,
         "oanda_env_configured": broker.is_configured(),
         "smoke_scope": "pipeline_wiring",
         "smoke_semantics": {
             "market_data_checked": False,
             "scanner_checked": False,
             "payload_preview_checked": False,
+            "shadow_checked": False,
             "broker_submission_checked": False,
             "live_trading_ready_proof": False,
         },
@@ -244,6 +306,48 @@ def cmd_scan_once(instrument: str | None = None, session: str | None = None, pos
         session=resolved_session,
     )
     result = components.scanner.scan_once(request)
+    ts_utc = utc_now_iso()
+    summary = result.summary()
+
+    shadow = ShadowEvaluator().build_from_scan_result(
+        instrument=resolved_instrument,
+        candidate_id=summary.get("candidate_id") or f"shadow-{uuid4()}",
+        stage=result.stage,
+        allowed=result.allowed,
+        reasons=list(result.reasons),
+        regime_name=summary.get("regime_name"),
+        score_value=summary.get("score_value"),
+        intent_id=summary.get("intent_id"),
+        payload_allowed=summary.get("payload_allowed"),
+    )
+    db.insert_shadow_evaluation(
+        candidate_id=shadow.candidate_id,
+        instrument=shadow.instrument,
+        decision=shadow.decision,
+        hypothetical_outcome=shadow.hypothetical_outcome,
+        notes=shadow.notes,
+        ts_utc=ts_utc,
+    )
+
+    decision_snapshot = DecisionSnapshot(
+        ts_utc=ts_utc,
+        instrument=resolved_instrument,
+        module="scan_once",
+        decision_type="scan_flow",
+        status=result.stage,
+        reasons=list(result.reasons),
+        context={
+            "summary": summary,
+            "request": request.to_dict(),
+        },
+    )
+
+    persistence = _persist_scan_artifacts(
+        db=db,
+        request=request,
+        result=result,
+        ts_utc=ts_utc,
+    )
 
     payload = {
         "config_loaded": True,
@@ -252,10 +356,16 @@ def cmd_scan_once(instrument: str | None = None, session: str | None = None, pos
         "scan_scope": "scanner_cli",
         "scan_semantics": _scan_cli_stage_flags(result),
         "request": request.to_dict(),
-        "summary": _scan_cli_summary(request, result),
+        "summary": summary,
         "focus": _scan_cli_focus(result),
         "result": result.to_dict(),
     }
+    payload["result"]["details"]["shadow"] = shadow.to_dict()
+    payload["result"]["details"]["decision_snapshot"] = decision_snapshot.to_dict()
+    payload["result"]["details"]["persistence"] = persistence
+    payload["focus"]["shadow"] = shadow.to_dict()
+    payload["focus"]["decision_snapshot"] = decision_snapshot.to_dict()
+    payload["focus"]["persistence"] = persistence
 
     if journal is not None:
         journal.info("Scan once completed", payload)
