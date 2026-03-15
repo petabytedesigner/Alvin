@@ -132,3 +132,59 @@ CREATE TABLE IF NOT EXISTS retry_decisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_retry_decisions_intent_id ON retry_decisions(intent_id);
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id TEXT NOT NULL UNIQUE,
+  instrument TEXT NOT NULL,
+  session TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  allowed INTEGER NOT NULL,
+  stage_group TEXT NOT NULL,
+  primary_reason TEXT,
+  correlation_id TEXT,
+  ts_utc TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  summary_json TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_runs_instrument ON scan_runs(instrument);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_stage ON scan_runs(stage);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_allowed ON scan_runs(allowed);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_ts_utc ON scan_runs(ts_utc);
+
+CREATE TABLE IF NOT EXISTS payload_previews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  preview_id TEXT NOT NULL UNIQUE,
+  scan_id TEXT NOT NULL,
+  intent_id TEXT,
+  instrument TEXT NOT NULL,
+  allowed INTEGER NOT NULL,
+  units INTEGER,
+  order_type TEXT,
+  stop_distance REAL,
+  risk_amount REAL,
+  payload_json TEXT NOT NULL,
+  ts_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payload_previews_scan_id ON payload_previews(scan_id);
+CREATE INDEX IF NOT EXISTS idx_payload_previews_intent_id ON payload_previews(intent_id);
+CREATE INDEX IF NOT EXISTS idx_payload_previews_instrument ON payload_previews(instrument);
+
+CREATE TABLE IF NOT EXISTS scan_decision_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id TEXT NOT NULL UNIQUE,
+  scan_id TEXT NOT NULL,
+  instrument TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  candidate_id TEXT,
+  intent_id TEXT,
+  payload_preview_id TEXT,
+  ts_utc TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_decision_snapshots_scan_id ON scan_decision_snapshots(scan_id);
+CREATE INDEX IF NOT EXISTS idx_scan_decision_snapshots_instrument ON scan_decision_snapshots(instrument);

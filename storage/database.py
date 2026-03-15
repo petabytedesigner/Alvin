@@ -5,6 +5,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict
+from uuid import uuid4
 
 
 class RuntimeSchemaCompatibilityError(RuntimeError):
@@ -235,6 +236,127 @@ class Database:
         )
         self.connection.commit()
 
+    def insert_scan_run(
+        self,
+        *,
+        instrument: str,
+        session: str,
+        stage: str,
+        allowed: bool,
+        stage_group: str,
+        request: Dict[str, Any],
+        summary: Dict[str, Any],
+        result: Dict[str, Any],
+        ts_utc: str,
+        primary_reason: str | None = None,
+        correlation_id: str | None = None,
+        scan_id: str | None = None,
+    ) -> str:
+        resolved_scan_id = scan_id or str(uuid4())
+        self.connection.execute(
+            """
+            INSERT INTO scan_runs
+            (scan_id, instrument, session, stage, allowed, stage_group, primary_reason, correlation_id, ts_utc, request_json, summary_json, result_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resolved_scan_id,
+                instrument,
+                session,
+                stage,
+                1 if bool(allowed) else 0,
+                stage_group,
+                primary_reason,
+                correlation_id,
+                ts_utc,
+                json.dumps(request or {}, ensure_ascii=False, sort_keys=True),
+                json.dumps(summary or {}, ensure_ascii=False, sort_keys=True),
+                json.dumps(result or {}, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.connection.commit()
+        return resolved_scan_id
+
+    def insert_payload_preview(
+        self,
+        *,
+        scan_id: str,
+        instrument: str,
+        payload_preview: Dict[str, Any],
+        sizing: Dict[str, Any] | None,
+        ts_utc: str,
+        intent_id: str | None = None,
+        preview_id: str | None = None,
+    ) -> str:
+        resolved_preview_id = preview_id or str(uuid4())
+        execution_payload = (payload_preview or {}).get("execution_payload") or {}
+        details = (payload_preview or {}).get("details") or {}
+        sizing_details = sizing or {}
+        self.connection.execute(
+            """
+            INSERT INTO payload_previews
+            (preview_id, scan_id, intent_id, instrument, allowed, units, order_type, stop_distance, risk_amount, payload_json, ts_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resolved_preview_id,
+                scan_id,
+                intent_id,
+                instrument,
+                1 if bool((payload_preview or {}).get("allowed")) else 0,
+                execution_payload.get("units") or details.get("units"),
+                execution_payload.get("order_type"),
+                sizing_details.get("stop_distance"),
+                sizing_details.get("risk_amount"),
+                json.dumps(
+                    {
+                        "payload_preview": payload_preview or {},
+                        "sizing": sizing_details,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                ts_utc,
+            ),
+        )
+        self.connection.commit()
+        return resolved_preview_id
+
+    def insert_scan_decision_snapshot(
+        self,
+        *,
+        scan_id: str,
+        instrument: str,
+        stage: str,
+        payload: Dict[str, Any],
+        ts_utc: str,
+        candidate_id: str | None = None,
+        intent_id: str | None = None,
+        payload_preview_id: str | None = None,
+        snapshot_id: str | None = None,
+    ) -> str:
+        resolved_snapshot_id = snapshot_id or str(uuid4())
+        self.connection.execute(
+            """
+            INSERT INTO scan_decision_snapshots
+            (snapshot_id, scan_id, instrument, stage, candidate_id, intent_id, payload_preview_id, ts_utc, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resolved_snapshot_id,
+                scan_id,
+                instrument,
+                stage,
+                candidate_id,
+                intent_id,
+                payload_preview_id,
+                ts_utc,
+                json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.connection.commit()
+        return resolved_snapshot_id
+
     def _serialize_order_intent(self, intent: Any) -> Dict[str, Any]:
         if hasattr(intent, "to_dict") and callable(intent.to_dict):
             snapshot = intent.to_dict()
@@ -310,6 +432,44 @@ class Database:
                 "reason",
                 "details_json",
                 "ts_utc",
+            },
+            "scan_runs": {
+                "scan_id",
+                "instrument",
+                "session",
+                "stage",
+                "allowed",
+                "stage_group",
+                "primary_reason",
+                "correlation_id",
+                "ts_utc",
+                "request_json",
+                "summary_json",
+                "result_json",
+            },
+            "payload_previews": {
+                "preview_id",
+                "scan_id",
+                "intent_id",
+                "instrument",
+                "allowed",
+                "units",
+                "order_type",
+                "stop_distance",
+                "risk_amount",
+                "payload_json",
+                "ts_utc",
+            },
+            "scan_decision_snapshots": {
+                "snapshot_id",
+                "scan_id",
+                "instrument",
+                "stage",
+                "candidate_id",
+                "intent_id",
+                "payload_preview_id",
+                "ts_utc",
+                "payload_json",
             },
         }
 
