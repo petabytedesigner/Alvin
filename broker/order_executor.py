@@ -39,7 +39,10 @@ class OrderExecutor:
                 broker_http_status=0,
                 broker_order_id=None,
                 reasons=["oanda_not_configured"],
-                details={"intent_id": execution_payload.intent_id},
+                details={
+                    "intent_id": execution_payload.intent_id,
+                    "execution_category": "configuration_error",
+                },
             )
 
         try:
@@ -56,12 +59,22 @@ class OrderExecutor:
                 reasons=["broker_submit_exception"],
                 details={
                     "intent_id": execution_payload.intent_id,
+                    "execution_category": "transport_error",
                     "error": str(exc),
                 },
             )
 
         broker_order_id = self._extract_order_id(response_json)
         reasons = self._classify(status_code, response_json)
+        execution_category = self._execution_category(status_code=status_code, response_json=response_json, broker_order_id=broker_order_id)
+
+        broker_truth: Dict[str, Any] = {
+            "order_id": broker_order_id,
+            "create_transaction_id": self._extract_transaction_id(response_json, "orderCreateTransaction"),
+            "fill_transaction_id": self._extract_transaction_id(response_json, "orderFillTransaction"),
+            "cancel_transaction_id": self._extract_transaction_id(response_json, "orderCancelTransaction"),
+            "reject_transaction_id": self._extract_transaction_id(response_json, "orderRejectTransaction"),
+        }
 
         submitted = 200 <= status_code < 300 and broker_order_id is not None
         status = "submitted" if submitted else self._status_name(status_code, response_json)
@@ -77,17 +90,31 @@ class OrderExecutor:
                 "instrument": execution_payload.instrument,
                 "side": execution_payload.side,
                 "units": execution_payload.units,
+                "execution_category": execution_category,
+                "broker_truth": broker_truth,
                 "response": response_json,
             },
         )
 
     def _extract_order_id(self, response_json: Dict[str, Any]) -> Optional[str]:
-        for key in ("orderCreateTransaction", "orderFillTransaction", "longOrderCreateTransaction", "shortOrderCreateTransaction"):
+        for key in (
+            "orderCreateTransaction",
+            "orderFillTransaction",
+            "longOrderCreateTransaction",
+            "shortOrderCreateTransaction",
+            "orderCancelTransaction",
+        ):
             block = response_json.get(key)
             if isinstance(block, dict) and block.get("id") is not None:
                 return str(block["id"])
         if isinstance(response_json.get("id"), (str, int)):
             return str(response_json["id"])
+        return None
+
+    def _extract_transaction_id(self, response_json: Dict[str, Any], key: str) -> Optional[str]:
+        block = response_json.get(key)
+        if isinstance(block, dict) and block.get("id") is not None:
+            return str(block["id"])
         return None
 
     def _classify(self, status_code: int, response_json: Dict[str, Any]) -> list[str]:
@@ -107,6 +134,8 @@ class OrderExecutor:
             reasons.append("broker_not_found")
         elif status_code == 405:
             reasons.append("broker_method_not_allowed")
+        elif status_code == 409:
+            reasons.append("broker_conflict")
         elif status_code == 429:
             reasons.append("broker_rate_limited")
         elif 500 <= status_code < 600:
@@ -128,10 +157,33 @@ class OrderExecutor:
             return "authorization_error"
         if status_code == 404:
             return "not_found"
+        if status_code == 409:
+            return "conflict"
         if status_code == 429:
             return "rate_limited"
         if 500 <= status_code < 600:
             return "broker_error"
         if response_json.get("errorMessage"):
             return "rejected"
+        return "unknown_failure"
+
+    def _execution_category(
+        self,
+        *,
+        status_code: int,
+        response_json: Dict[str, Any],
+        broker_order_id: Optional[str],
+    ) -> str:
+        if 200 <= status_code < 300 and broker_order_id is not None:
+            return "submitted_to_broker"
+        if status_code in {400, 404, 409}:
+            return "terminal_rejection"
+        if status_code in {401, 403}:
+            return "authorization_failure"
+        if status_code == 429:
+            return "retryable_rate_limit"
+        if 500 <= status_code < 600:
+            return "retryable_server_error"
+        if response_json.get("errorMessage"):
+            return "terminal_rejection"
         return "unknown_failure"
