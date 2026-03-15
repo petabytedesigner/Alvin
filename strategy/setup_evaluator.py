@@ -18,13 +18,14 @@ class SetupEvaluationResult:
     details: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
+        risk_state = "approved" if self.risk.allowed else "blocked"
         return {
             "allowed": self.allowed,
             "state": self.state,
             "acceptance": self.acceptance.to_dict(),
             "risk": {
                 "allowed": self.risk.allowed,
-                "state": self.risk.state,
+                "state": risk_state,
                 "risk_pct": self.risk.risk_pct,
                 "reasons": list(self.risk.reasons),
                 "details": dict(self.risk.details),
