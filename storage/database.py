@@ -357,6 +357,77 @@ class Database:
         self.connection.commit()
         return resolved_snapshot_id
 
+    def insert_reconciliation_run(self, *, run: Any) -> None:
+        payload = run.to_dict() if hasattr(run, "to_dict") else {
+            "ts_utc": getattr(run, "ts_utc", ""),
+            "status": getattr(run, "status", "unknown"),
+            "mismatches": list(getattr(run, "mismatches", [])),
+            "repairs": list(getattr(run, "repairs", [])),
+        }
+        run_id = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO reconciliation_runs (run_id, ts_utc, status, payload_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                payload.get("ts_utc", ""),
+                payload.get("status", "unknown"),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.connection.commit()
+
+    def fetch_order_intents(self) -> list[Dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT payload_json FROM order_intents ORDER BY created_at_utc ASC"
+        ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows if row["payload_json"]]
+
+    def fetch_execution_results(self) -> list[Dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT intent_id, status, submitted, broker_http_status, broker_order_id, reasons_json, details_json, ts_utc "
+            "FROM execution_results ORDER BY ts_utc ASC"
+        ).fetchall()
+        results: list[Dict[str, Any]] = []
+        for row in rows:
+            results.append(
+                {
+                    "intent_id": row["intent_id"],
+                    "status": row["status"],
+                    "submitted": bool(row["submitted"]),
+                    "broker_http_status": row["broker_http_status"],
+                    "broker_order_id": row["broker_order_id"],
+                    "reasons": json.loads(row["reasons_json"] or "[]"),
+                    "details": json.loads(row["details_json"] or "{}"),
+                    "ts_utc": row["ts_utc"],
+                }
+            )
+        return results
+
+    def fetch_intent_state_transitions(self) -> list[Dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT intent_id, previous_state, next_state, allowed, reasons_json, details_json, ts_utc "
+            "FROM intent_state_transitions ORDER BY ts_utc ASC"
+        ).fetchall()
+        transitions: list[Dict[str, Any]] = []
+        for row in rows:
+            transitions.append(
+                {
+                    "intent_id": row["intent_id"],
+                    "previous_state": row["previous_state"],
+                    "next_state": row["next_state"],
+                    "allowed": bool(row["allowed"]),
+                    "reasons": json.loads(row["reasons_json"] or "[]"),
+                    "details": json.loads(row["details_json"] or "{}"),
+                    "ts_utc": row["ts_utc"],
+                }
+            )
+        return transitions
+
     def _serialize_order_intent(self, intent: Any) -> Dict[str, Any]:
         if hasattr(intent, "to_dict") and callable(intent.to_dict):
             snapshot = intent.to_dict()
@@ -469,6 +540,12 @@ class Database:
                 "intent_id",
                 "payload_preview_id",
                 "ts_utc",
+                "payload_json",
+            },
+            "reconciliation_runs": {
+                "run_id",
+                "ts_utc",
+                "status",
                 "payload_json",
             },
         }
