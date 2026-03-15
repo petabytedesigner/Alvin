@@ -37,6 +37,31 @@ def _journal_if_enabled(config: dict, db: Database) -> Journal | None:
     return None
 
 
+def _scan_cli_summary(request: ScanRequest, result) -> dict:
+    result_summary = result.summary()
+    return {
+        "instrument": request.instrument,
+        "session": request.session,
+        "post_news": request.post_news,
+        "status": result_summary.get("status"),
+        "stage": result_summary.get("stage"),
+        "stage_group": result_summary.get("stage_group"),
+        "primary_reason": result_summary.get("primary_reason"),
+        "regime_name": result_summary.get("regime_name"),
+        "selected_level_kind": result_summary.get("selected_level_kind"),
+        "selected_level_price": result_summary.get("selected_level_price"),
+        "break_retest_direction": result_summary.get("break_retest_direction"),
+        "confirmation_type": result_summary.get("confirmation_type"),
+        "candidate_id": result_summary.get("candidate_id"),
+        "candidate_side": result_summary.get("candidate_side"),
+        "candidate_grade": result_summary.get("candidate_grade"),
+        "score_value": result_summary.get("score_value"),
+        "evaluation_state": result_summary.get("evaluation_state"),
+        "risk_pct": result_summary.get("risk_pct"),
+        "execution_quality": result_summary.get("execution_quality"),
+    }
+
+
 def cmd_bootstrap() -> None:
     config = load_all_configs()
     db = build_db(config)
@@ -177,7 +202,16 @@ def cmd_scan_once(instrument: str | None = None, session: str | None = None, pos
         "config_loaded": True,
         "db_ready": True,
         "scanner_ready": getattr(components, "scanner", None) is not None,
+        "scan_scope": "scanner_cli",
+        "scan_semantics": {
+            "market_data_fetch_attempted": True,
+            "setup_flow_attempted": True,
+            "evaluation_flow_attempted": True,
+            "intent_flow_attempted": False,
+            "execution_submission_attempted": False,
+        },
         "request": request.to_dict(),
+        "summary": _scan_cli_summary(request, result),
         "result": result.to_dict(),
     }
 
