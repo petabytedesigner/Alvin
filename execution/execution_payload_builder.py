@@ -37,6 +37,14 @@ class ExecutionPayloadBuildResult:
     reasons: list[str]
     details: Dict[str, Any]
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "execution_payload": self.execution_payload.to_dict() if self.execution_payload is not None else None,
+            "reasons": list(self.reasons),
+            "details": dict(self.details),
+        }
+
 
 class ExecutionPayloadBuilder:
     VALID_ORDER_TYPES = {"market"}

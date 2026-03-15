@@ -14,10 +14,12 @@ from execution.execution_result_handler import ExecutionResultHandler
 from execution.intent_state_manager import IntentStateManager
 from execution.order_intent_builder import OrderIntentBuilder
 from execution.retry_policy import RetryPolicy
+from execution.sized_execution_payload_builder import SizedExecutionPayloadBuilder
 from intelligence.acceptance_pipeline import AcceptancePipeline
 from intelligence.execution_quality import ExecutionQualityAssessor
 from intelligence.regime_classifier import RegimeClassifier
 from market_data.oanda_market_data import OandaMarketData
+from risk.position_sizer import PositionSizer
 from risk.risk_gate import RiskGate
 from runtime.pipeline_runner import PipelineRunner
 from runtime.scanner import Scanner
@@ -42,10 +44,12 @@ class AlvinComponents:
     execution_quality_assessor: ExecutionQualityAssessor
     acceptance_pipeline: AcceptancePipeline
     risk_gate: RiskGate
+    position_sizer: PositionSizer
     setup_builder: StrategySetupBuilder
     setup_evaluator: SetupEvaluator
     order_intent_builder: OrderIntentBuilder
     execution_payload_builder: ExecutionPayloadBuilder
+    sized_execution_payload_builder: SizedExecutionPayloadBuilder
     order_executor: OrderExecutor
     execution_result_handler: ExecutionResultHandler
     intent_state_manager: IntentStateManager
@@ -71,10 +75,15 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
     execution_quality_assessor = ExecutionQualityAssessor.from_config(resolved_config["execution"])
     acceptance_pipeline = AcceptancePipeline()
     risk_gate = RiskGate.from_config(resolved_config["risk"])
+    position_sizer = PositionSizer.from_config(resolved_config.get("risk", {}))
     setup_builder = StrategySetupBuilder()
     setup_evaluator = SetupEvaluator(acceptance_pipeline=acceptance_pipeline, risk_gate=risk_gate)
     order_intent_builder = OrderIntentBuilder()
     execution_payload_builder = ExecutionPayloadBuilder()
+    sized_execution_payload_builder = SizedExecutionPayloadBuilder(
+        position_sizer=position_sizer,
+        payload_builder=execution_payload_builder,
+    )
     order_executor = OrderExecutor(client=oanda_client)
     execution_result_handler = ExecutionResultHandler()
     intent_state_manager = IntentStateManager()
@@ -93,6 +102,7 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
         setup_builder=setup_builder,
         setup_evaluator=setup_evaluator,
         order_intent_builder=order_intent_builder,
+        sized_execution_payload_builder=sized_execution_payload_builder,
         minimum_trade_score=float(resolved_config.get("scoring", {}).get("minimum_trade_score", 50.0)),
     )
 
@@ -122,10 +132,12 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
         execution_quality_assessor=execution_quality_assessor,
         acceptance_pipeline=acceptance_pipeline,
         risk_gate=risk_gate,
+        position_sizer=position_sizer,
         setup_builder=setup_builder,
         setup_evaluator=setup_evaluator,
         order_intent_builder=order_intent_builder,
         execution_payload_builder=execution_payload_builder,
+        sized_execution_payload_builder=sized_execution_payload_builder,
         order_executor=order_executor,
         execution_result_handler=execution_result_handler,
         intent_state_manager=intent_state_manager,

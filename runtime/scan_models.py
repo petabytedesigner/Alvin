@@ -39,6 +39,8 @@ class ScanResult:
             return "evaluation"
         if stage.startswith("intent_"):
             return "intent"
+        if stage.startswith("payload_"):
+            return "payload"
         return "unknown"
 
     def summary(self) -> Dict[str, Any]:
@@ -54,6 +56,9 @@ class ScanResult:
         intent = self.details.get("intent") or {}
         intent_details = intent.get("details") or {}
         intent_obj = intent.get("intent") or {}
+        sizing = self.details.get("sizing") or {}
+        payload_preview = self.details.get("payload_preview") or {}
+        payload_details = payload_preview.get("details") or {}
 
         return {
             "status": "allowed" if self.allowed else "blocked",
@@ -81,6 +86,11 @@ class ScanResult:
             "intent_allowed": intent.get("allowed"),
             "intent_id": intent_obj.get("intent_id") or intent_details.get("intent_id"),
             "intent_state": intent_obj.get("state"),
+            "sizing_allowed": sizing.get("allowed"),
+            "sized_units": sizing.get("units"),
+            "stop_distance": sizing.get("stop_distance"),
+            "payload_allowed": payload_preview.get("allowed"),
+            "payload_units": payload_details.get("units"),
         }
 
     def to_dict(self) -> Dict[str, Any]:

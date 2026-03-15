@@ -32,6 +32,7 @@ class Scanner:
     - build setup candidate
     - evaluate setup
     - build order intent when evaluation is approved
+    - build sizing and payload preview without broker submission
     """
 
     def __init__(
@@ -48,6 +49,7 @@ class Scanner:
         setup_builder: StrategySetupBuilder,
         setup_evaluator: SetupEvaluator,
         order_intent_builder: Any | None = None,
+        sized_execution_payload_builder: Any | None = None,
         minimum_trade_score: float = 50.0,
     ) -> None:
         self.market_data = market_data
@@ -61,6 +63,7 @@ class Scanner:
         self.setup_builder = setup_builder
         self.setup_evaluator = setup_evaluator
         self.order_intent_builder = order_intent_builder
+        self.sized_execution_payload_builder = sized_execution_payload_builder
         self.minimum_trade_score = float(minimum_trade_score)
         self.confirmation_validator = M15ConfirmationValidator()
 
@@ -294,7 +297,12 @@ class Scanner:
             request=request,
             selected_level=selected_level,
         )
-        base_details["intent"] = intent_result
+        base_details["intent"] = {
+            "allowed": intent_result["allowed"],
+            "reasons": intent_result["reasons"],
+            "details": intent_result["details"],
+            "intent": intent_result["intent"],
+        }
 
         if not intent_result["allowed"]:
             return ScanResult(
@@ -304,10 +312,27 @@ class Scanner:
                 details=base_details,
             )
 
+        sizing_payload_preview = self._build_sizing_and_payload_preview(
+            instrument=instrument,
+            intent=intent_result.get("intent_object"),
+            break_retest=break_retest,
+            atr_value=atr.value,
+        )
+        base_details["sizing"] = sizing_payload_preview["sizing"]
+        base_details["payload_preview"] = sizing_payload_preview["payload_preview"]
+
+        if not sizing_payload_preview["allowed"]:
+            return ScanResult(
+                allowed=False,
+                stage="payload_blocked",
+                reasons=list(sizing_payload_preview["reasons"]),
+                details=base_details,
+            )
+
         return ScanResult(
             allowed=True,
-            stage="intent_ready",
-            reasons=list(intent_result["reasons"]),
+            stage="payload_ready",
+            reasons=list(sizing_payload_preview["reasons"]),
             details=base_details,
         )
 
@@ -326,6 +351,7 @@ class Scanner:
                 "reasons": ["order_intent_builder_missing"],
                 "details": {"instrument": instrument},
                 "intent": None,
+                "intent_object": None,
             }
 
         build_result = self.order_intent_builder.build(
@@ -347,7 +373,68 @@ class Scanner:
             "reasons": list(build_result.reasons),
             "details": dict(build_result.details),
             "intent": build_result.intent.to_dict() if build_result.intent is not None else None,
+            "intent_object": build_result.intent,
         }
+
+    def _build_sizing_and_payload_preview(
+        self,
+        *,
+        instrument: str,
+        intent: Any,
+        break_retest: BreakRetestResult,
+        atr_value: float,
+    ) -> Dict[str, Any]:
+        if intent is None or self.sized_execution_payload_builder is None:
+            return {
+                "allowed": False,
+                "reasons": ["sized_execution_payload_builder_missing"],
+                "sizing": {"allowed": False},
+                "payload_preview": {"allowed": False},
+            }
+
+        entry_price = float(break_retest.break_assessment.close_price)
+        preview_equity = self._default_preview_equity(instrument)
+        take_profit = self._derive_take_profit(
+            entry_price=entry_price,
+            side=intent.side,
+            atr_value=atr_value,
+        )
+
+        sized_result = self.sized_execution_payload_builder.build_from_intent_payload(
+            intent=intent,
+            equity=preview_equity,
+            entry_price=entry_price,
+            atr_value=float(atr_value),
+            take_profit=take_profit,
+            metadata={
+                "preview": True,
+                "source": "scan_once",
+            },
+        )
+
+        sizing_dict = sized_result.size_result.to_dict()
+        sizing_dict["preview_equity"] = preview_equity
+        payload_preview = sized_result.payload_result.to_dict()
+        payload_preview["preview_take_profit"] = round(take_profit, 6)
+
+        return {
+            "allowed": bool(sized_result.allowed),
+            "reasons": list(sized_result.reasons),
+            "sizing": sizing_dict,
+            "payload_preview": payload_preview,
+        }
+
+    def _default_preview_equity(self, instrument: str) -> float:
+        if instrument.startswith("XAU"):
+            return 15000.0
+        if instrument.startswith("NAS"):
+            return 20000.0
+        return 10000.0
+
+    def _derive_take_profit(self, *, entry_price: float, side: str, atr_value: float) -> float:
+        if side == "long":
+            return float(entry_price) + (float(atr_value) * 2.0)
+        return float(entry_price) - (float(atr_value) * 2.0)
 
     def _base_details(
         self,
