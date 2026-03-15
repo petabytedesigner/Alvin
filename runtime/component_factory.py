@@ -89,6 +89,9 @@ def build_alvin_components(config: Dict[str, Any] | None = None) -> AlvinCompone
         level_detector=level_detector,
         break_retest_validator=break_retest_validator,
         regime_classifier=regime_classifier,
+        execution_quality_assessor=execution_quality_assessor,
+        setup_builder=setup_builder,
+        setup_evaluator=setup_evaluator,
     )
 
     pipeline_runner = PipelineRunner(

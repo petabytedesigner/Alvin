@@ -17,6 +17,22 @@ class SetupEvaluationResult:
     reasons: List[str]
     details: Dict[str, Any]
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "state": self.state,
+            "acceptance": self.acceptance.to_dict(),
+            "risk": {
+                "allowed": self.risk.allowed,
+                "state": self.risk.state,
+                "risk_pct": self.risk.risk_pct,
+                "reasons": list(self.risk.reasons),
+                "details": dict(self.risk.details),
+            },
+            "reasons": list(self.reasons),
+            "details": dict(self.details),
+        }
+
 
 class SetupEvaluator:
     def __init__(self, acceptance_pipeline: AcceptancePipeline, risk_gate: RiskGate) -> None:

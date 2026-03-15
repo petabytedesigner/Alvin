@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
-from strategy.signal_candidate import SignalCandidate, SignalCandidateBuilder
-from strategy.level_detection import Level
 from strategy.break_retest_validator import BreakRetestResult
+from strategy.level_detection import Level
 from strategy.m15_confirmation import ConfirmationResult
+from strategy.signal_candidate import SignalCandidate, SignalCandidateBuilder
 
 
 @dataclass(slots=True)
@@ -61,18 +61,24 @@ class StrategySetupBuilder:
             "level_kind": level.kind,
             "level_price": level.price,
             "level_touches": level.touches,
+            "level_confidence": level.confidence,
             "break_retest": {
                 "valid": break_retest.valid,
                 "direction": break_retest.direction,
                 "reason": break_retest.reason,
                 "break_valid": break_retest.break_assessment.valid,
+                "break_reason": break_retest.break_assessment.reason,
+                "break_close_price": break_retest.break_assessment.close_price,
                 "retest_valid": break_retest.retest_assessment.valid if break_retest.retest_assessment else False,
+                "retest_reason": break_retest.retest_assessment.reason if break_retest.retest_assessment else None,
+                "retest_price": break_retest.retest_assessment.retest_price if break_retest.retest_assessment else None,
             },
             "confirmation": {
                 "confirmed": confirmation.confirmed,
                 "type": confirmation.confirmation_type,
                 "confidence": confirmation.confidence,
                 "reasons": confirmation.reasons,
+                "details": confirmation.details,
             },
         }
 
