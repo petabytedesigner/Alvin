@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from contracts.order_lifecycle import OrderIntent
 from execution.execution_result_handler import HandledExecutionResult
@@ -26,6 +26,57 @@ class IntentStateTransition:
 
 
 class IntentStateManager:
+    def transition_to_submit_started(
+        self,
+        *,
+        intent: OrderIntent,
+        reason: str = "submit_started",
+    ) -> IntentStateTransition:
+        previous_state = intent.state
+        requested_next_state = "submit_started"
+        reasons = [reason]
+        details: Dict[str, Any] = {
+            "intent_id": intent.intent_id,
+            "requested_next_state": requested_next_state,
+            "current_state": previous_state,
+        }
+
+        allowed = intent.can_transition(requested_next_state)
+        if not allowed:
+            reasons.append("intent_state_transition_not_allowed_by_contract")
+            return IntentStateTransition(
+                previous_state=previous_state,
+                next_state=previous_state,
+                allowed=False,
+                reasons=_dedupe(reasons),
+                details=details,
+            )
+
+        details["next_state"] = requested_next_state
+        reasons.append("intent_submit_started")
+        return IntentStateTransition(
+            previous_state=previous_state,
+            next_state=requested_next_state,
+            allowed=True,
+            reasons=_dedupe(reasons),
+            details=details,
+        )
+
+    def apply_transition(
+        self,
+        *,
+        intent: OrderIntent,
+        transition: IntentStateTransition,
+        reason: Optional[str] = None,
+    ) -> IntentStateTransition:
+        if not transition.allowed:
+            return transition
+
+        if transition.next_state != intent.state:
+            transition_reason = reason or (transition.reasons[-1] if transition.reasons else None)
+            intent.transition(transition.next_state, reason=transition_reason)
+        return transition
+
     def transition_from_execution(
         self,
         *,

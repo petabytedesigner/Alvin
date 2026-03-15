@@ -203,6 +203,7 @@ class PipelineRunner:
                 "intent_id": intent_result.intent.intent_id,
                 "minimum_trade_score": minimum_trade_score,
                 "regime": regime_name,
+                "intent_lifecycle": intent_result.intent.lifecycle_summary(),
             },
         )
 
@@ -240,8 +241,30 @@ class PipelineRunner:
             result.details.setdefault("reasons", []).extend(list(getattr(execution_payload_result, "reasons", [])))
             return result
 
-        if getattr(intent, "state", None) == "intent_created" and hasattr(intent, "transition"):
-            intent.transition("submit_started", reason="submit_started")
+        pre_submit_transition = None
+        if getattr(intent, "state", None) == "intent_created":
+            if self.intent_state_manager is not None and hasattr(self.intent_state_manager, "transition_to_submit_started"):
+                pre_submit_transition = self.intent_state_manager.transition_to_submit_started(
+                    intent=intent,
+                    reason="submit_started",
+                )
+                result.details["pre_submit_transition"] = pre_submit_transition.to_dict()
+                if not pre_submit_transition.allowed:
+                    result.stage = "submit_blocked"
+                    result.allowed = False
+                    result.details.setdefault("reasons", []).extend(list(pre_submit_transition.reasons))
+                    return result
+
+                if hasattr(self.intent_state_manager, "apply_transition"):
+                    self.intent_state_manager.apply_transition(
+                        intent=intent,
+                        transition=pre_submit_transition,
+                    )
+                elif hasattr(intent, "transition"):
+                    transition_reason = pre_submit_transition.reasons[-1] if pre_submit_transition.reasons else None
+                    intent.transition(pre_submit_transition.next_state, reason=transition_reason)
+            elif hasattr(intent, "transition"):
+                intent.transition("submit_started", reason="submit_started")
 
         execution_payload = getattr(execution_payload_result, "execution_payload", None)
         execution_result = self.order_executor.submit(execution_payload=execution_payload)
@@ -264,9 +287,17 @@ class PipelineRunner:
             )
             result.transition_result = transition_result
 
-            if transition_result.allowed and hasattr(intent, "transition"):
-                transition_reason = transition_result.reasons[-1] if transition_result.reasons else None
-                intent.transition(transition_result.next_state, reason=transition_reason)
+            if transition_result.allowed:
+                if hasattr(self.intent_state_manager, "apply_transition"):
+                    transition_reason = transition_result.reasons[-1] if transition_result.reasons else None
+                    self.intent_state_manager.apply_transition(
+                        intent=intent,
+                        transition=transition_result,
+                        reason=transition_reason,
+                    )
+                elif hasattr(intent, "transition"):
+                    transition_reason = transition_result.reasons[-1] if transition_result.reasons else None
+                    intent.transition(transition_result.next_state, reason=transition_reason)
 
         retry_decision = None
         if (
@@ -306,6 +337,7 @@ class PipelineRunner:
                 "transition_next_state": getattr(transition_result, "next_state", None) if transition_result is not None else None,
                 "intent_state": getattr(intent, "state", None),
                 "intent_history": list(getattr(intent, "history", [])) if hasattr(intent, "history") else None,
+                "intent_lifecycle": getattr(intent, "lifecycle_summary", lambda: {"state": getattr(intent, "state", None)})(),
                 "retry_scheduled": bool(getattr(retry_decision, "should_retry", False)) if retry_decision is not None else False,
                 "audit_allowed": bool(getattr(audit_result, "allowed", False)) if audit_result is not None else None,
             }

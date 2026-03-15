@@ -50,6 +50,14 @@ VALID_TRANSITIONS = {
     "expired": set(),
 }
 
+TERMINAL_STATES = {
+    "terminal_failure",
+    "position_closed",
+    "rejected",
+    "cancelled",
+    "expired",
+}
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -115,6 +123,26 @@ class OrderIntent:
         if reason is not None:
             self.reason = reason
         self.history.append(next_state)
+
+    def is_terminal(self) -> bool:
+        return self.state in TERMINAL_STATES
+
+    def lifecycle_summary(self) -> Dict[str, Any]:
+        return {
+            "intent_id": self.intent_id,
+            "instrument": self.instrument,
+            "side": self.side,
+            "timeframe": self.timeframe,
+            "setup_type": self.setup_type,
+            "state": self.state,
+            "reason": self.reason,
+            "history": list(self.history),
+            "terminal": self.is_terminal(),
+            "created_at_utc": self.created_at_utc,
+            "expires_at_utc": self.expires_at_utc(),
+            "dedupe_key": self.dedupe_key,
+            "correlation_id": self.correlation_id,
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
