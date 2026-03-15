@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Sequence
 
 
 @dataclass(slots=True)
@@ -36,6 +36,15 @@ class ConfirmationResult:
     confidence: float
     reasons: list[str]
     details: dict
+
+    def to_dict(self) -> dict:
+        return {
+            "confirmed": self.confirmed,
+            "confirmation_type": self.confirmation_type,
+            "confidence": self.confidence,
+            "reasons": list(self.reasons),
+            "details": dict(self.details),
+        }
 
 
 class M15ConfirmationValidator:
@@ -143,3 +152,42 @@ class M15ConfirmationValidator:
             reasons.append("no_confirmation")
 
         return ConfirmationResult(confirmed, confirmation_type, confidence, reasons, details)
+
+    def validate_recent_window(self, candles: Sequence[M15Candle], side: str, lookback_windows: int = 6) -> ConfirmationResult:
+        if len(candles) < 3:
+            return ConfirmationResult(False, "none", 0.0, ["insufficient_confirmation_data"], {})
+
+        last_result: ConfirmationResult | None = None
+        start_index = max(0, len(candles) - max(3, lookback_windows + 2))
+
+        for end_index in range(len(candles), start_index + 2, -1):
+            window = candles[max(0, end_index - 3):end_index]
+            if len(window) < 3:
+                continue
+            result = self.validate(window, side)
+            last_result = result
+            if result.confirmed:
+                details = dict(result.details)
+                details["window_end_ts_utc"] = getattr(window[-1], "ts_utc", "")
+                details["window_length"] = len(window)
+                return ConfirmationResult(
+                    confirmed=result.confirmed,
+                    confirmation_type=result.confirmation_type,
+                    confidence=result.confidence,
+                    reasons=list(result.reasons),
+                    details=details,
+                )
+
+        if last_result is None:
+            return ConfirmationResult(False, "none", 0.0, ["no_confirmation_window"], {"lookback_windows": lookback_windows})
+
+        details = dict(last_result.details)
+        details["lookback_windows"] = lookback_windows
+        details["window_search_confirmed"] = False
+        return ConfirmationResult(
+            confirmed=False,
+            confirmation_type="none",
+            confidence=last_result.confidence,
+            reasons=list(last_result.reasons),
+            details=details,
+        )

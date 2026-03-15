@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from strategy.level_detection import Candle, Level
 
@@ -40,6 +40,29 @@ class BreakRetestResult:
     break_assessment: BreakAssessment
     retest_assessment: Optional[RetestAssessment]
     details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class BreakRetestScan:
+    result: BreakRetestResult
+    break_index: Optional[int]
+    retest_index: Optional[int]
+    scanned_from_index: Optional[int]
+    scanned_to_index: Optional[int]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "result": {
+                "valid": self.result.valid,
+                "direction": self.result.direction,
+                "reason": self.result.reason,
+                "details": dict(self.result.details),
+            },
+            "break_index": self.break_index,
+            "retest_index": self.retest_index,
+            "scanned_from_index": self.scanned_from_index,
+            "scanned_to_index": self.scanned_to_index,
+        }
 
 
 class BreakRetestValidator:
@@ -301,4 +324,95 @@ class BreakRetestValidator:
                 "atr_value": atr_value,
                 "bars_since_break": bars_since_break,
             },
+        )
+
+    def scan_recent(
+        self,
+        *,
+        level: Level,
+        candles: Sequence[Candle],
+        atr_value: float,
+        spread_buffer: float = 0.0,
+        lookback_bars: int = 16,
+    ) -> BreakRetestScan:
+        if len(candles) < 3:
+            invalid = self.validate(
+                level=level,
+                break_candle=candles[-1],
+                retest_candle=None,
+                atr_value=atr_value,
+                spread_buffer=spread_buffer,
+            )
+            return BreakRetestScan(
+                result=invalid,
+                break_index=None,
+                retest_index=None,
+                scanned_from_index=max(0, len(candles) - 1),
+                scanned_to_index=len(candles) - 1,
+            )
+
+        lookback_start = max(1, len(candles) - max(3, int(lookback_bars)))
+        fallback_result: BreakRetestResult | None = None
+        fallback_break_index: int | None = None
+
+        for break_index in range(len(candles) - 2, lookback_start - 1, -1):
+            break_candle = candles[break_index]
+            break_assessment = self.assess_break(
+                level=level,
+                candle=break_candle,
+                atr_value=atr_value,
+                spread_buffer=spread_buffer,
+            )
+            if not break_assessment.valid:
+                if fallback_result is None:
+                    fallback_result = BreakRetestResult(
+                        valid=False,
+                        direction=break_assessment.direction,
+                        reason=break_assessment.reason,
+                        break_assessment=break_assessment,
+                        retest_assessment=None,
+                    )
+                    fallback_break_index = break_index
+                continue
+
+            for retest_index in range(break_index + 1, len(candles)):
+                retest_candle = candles[retest_index]
+                result = self.validate(
+                    level=level,
+                    break_candle=break_candle,
+                    retest_candle=retest_candle,
+                    atr_value=atr_value,
+                    spread_buffer=spread_buffer,
+                    bars_since_break=retest_index - break_index,
+                )
+                if result.valid:
+                    return BreakRetestScan(
+                        result=result,
+                        break_index=break_index,
+                        retest_index=retest_index,
+                        scanned_from_index=lookback_start,
+                        scanned_to_index=len(candles) - 1,
+                    )
+
+                if fallback_result is None or fallback_result.reason == "close_not_beyond_level":
+                    fallback_result = result
+                    fallback_break_index = break_index
+
+        if fallback_result is None:
+            fallback_result = self.validate(
+                level=level,
+                break_candle=candles[-2],
+                retest_candle=candles[-1],
+                atr_value=atr_value,
+                spread_buffer=spread_buffer,
+                bars_since_break=1,
+            )
+            fallback_break_index = len(candles) - 2
+
+        return BreakRetestScan(
+            result=fallback_result,
+            break_index=fallback_break_index,
+            retest_index=None,
+            scanned_from_index=lookback_start,
+            scanned_to_index=len(candles) - 1,
         )

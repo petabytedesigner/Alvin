@@ -105,6 +105,29 @@ class LevelDetector:
             },
         }
 
+    def flatten_levels(self, levels: dict[str, list[Level]]) -> list[Level]:
+        combined = list(levels.get("swing_levels", [])) + list(levels.get("range_levels", []))
+        return sorted(
+            combined,
+            key=lambda item: (-float(item.confidence), -int(item.touches), float(item.price)),
+        )
+
+    def rank_levels_for_price(self, *, levels: dict[str, list[Level]], reference_price: float) -> list[Level]:
+        combined = self.flatten_levels(levels)
+        return sorted(
+            combined,
+            key=lambda item: (
+                abs(float(item.price) - float(reference_price)),
+                -float(item.confidence),
+                -int(item.touches),
+                -int(item.last_index),
+            ),
+        )
+
+    def select_primary_level(self, *, levels: dict[str, list[Level]], reference_price: float) -> Level | None:
+        ranked = self.rank_levels_for_price(levels=levels, reference_price=reference_price)
+        return ranked[0] if ranked else None
+
     def _resolve_config(self, config: Mapping[str, Any] | None) -> Mapping[str, Any]:
         if config is None:
             return {}
@@ -189,6 +212,9 @@ class LevelDetector:
                         "source": "fractal_cluster",
                         "cluster_size": touches,
                         "price_samples": [round(p, 6) for p in cluster["prices"]],
+                        "cluster_first_index": first_index,
+                        "cluster_last_index": last_index,
+                        "cluster_span": spacing,
                     },
                 )
             )
@@ -206,7 +232,13 @@ class LevelDetector:
             return []
 
         midpoint = (high + low) / 2
-        confidence = round(min(0.92, 0.45 + (lookback / 100) + min(0.18, (atr_value * self.range_width_atr_multiple - width) / max(atr_value, 1e-9))), 4)
+        confidence = round(
+            min(
+                0.92,
+                0.45 + (lookback / 100) + min(0.18, (atr_value * self.range_width_atr_multiple - width) / max(atr_value, 1e-9)),
+            ),
+            4,
+        )
         first_index = len(candles) - lookback
         last_index = len(candles) - 1
 
